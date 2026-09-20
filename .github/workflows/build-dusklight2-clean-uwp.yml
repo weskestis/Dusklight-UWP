@@ -3,7 +3,7 @@ name: Build Clean Dusklight 2 UWP
 on:
   push:
     branches:
-      - codex/dusklight2-clean-uwp
+      - main
   workflow_dispatch:
 
 permissions:
