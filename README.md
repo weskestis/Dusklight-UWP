@@ -1,11 +1,11 @@
-# Dusklight 2 UWP clean build controls
+# Dusklight 2.0.1 UWP clean build controls
 
 This branch builds a separate Xbox/UWP x64 app from exact upstream Dusklight
-commit `e9b120544cb75e81b5aa36777f1688fa61f2d9e8`.
+commit `422d7bb1b6c8d973cccf8b3d0b226a57ac3cc8c7`.
 
 It applies only the reviewed Dusklight/Aurora UWP compatibility patches. The
 upstream Randomizer, Cosmetics, and Luau Runtime modules are kept at the exact
-revisions pinned by Dusklight 2.0. None of the private
+revisions pinned by Dusklight 2.0.1. None of the private
 `TwilightPrincessRandomizer` feature checkpoints are applied.
 
 The package identity is `Dusklight2UWP`, so it installs beside the customized

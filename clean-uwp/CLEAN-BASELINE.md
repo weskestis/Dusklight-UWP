@@ -1,14 +1,14 @@
-# Clean Dusklight 2 UWP baseline
+# Clean Dusklight 2.0.1 UWP baseline
 
 This build is intentionally separate from the customized
 `TwilightPrincessRandomizer` package line.
 
 ## Exact upstream source
 
-- Dusklight: `e9b120544cb75e81b5aa36777f1688fa61f2d9e8`
-- Aurora: `7d4484a7abd6a10d77716977d20ff9da0cb67ce5`
+- Dusklight: `422d7bb1b6c8d973cccf8b3d0b226a57ac3cc8c7`
+- Aurora: `d0933b745abe0eb9815bedcea8047575da18698d`
 - Borealis: `0bdba6c50a46409c4862474c72b4a3a631fbe0ec`
-- Randomizer: `d870681a04190ad68f4e37c84b6a91f9e230aaa2`
+- Randomizer: `d0ceae8f18bbef4a40287a72a2791a3c06c9aca5`
 - Cosmetics: `fd93491089fa95441789244f2b2fd22a451ecbcc`
 - UWP dependency: `6ba4aad18b0f149151784f31fd339225544e24f2`
 
@@ -24,11 +24,13 @@ The only source changes are the reviewed Xbox/UWP portability layer:
 - static UWP feed and final Windows Store package wrapper
 - final executable symbol-manifest generation for upstream code mods
 - UWP filesystem, controller, graphics, card, and dependency adaptations
+- removal of Funchook's desktop-only PSAPI diagnostics from the UWP binary
 - isolated package identity `Dusklight2UWP`
 - package artwork generated from the official upstream Dusklight icon, logo,
   and prelaunch background
-- packaging of only the three modules upstream marks `BUNDLE`: Luau Runtime,
-  Cosmetics, and Randomizer
+- Store-native, AppContainer-compatible builds of only the three modules
+  upstream marks `BUNDLE`: Luau Runtime, Cosmetics, and Randomizer; their
+  signed directory bundles load in place from the package
 
 The build does not apply any private `.634-.660` feature layer. A CI guard
 fails if known private-only markers such as Enemy Souls, Boss Souls, or

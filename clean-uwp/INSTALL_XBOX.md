@@ -1,4 +1,4 @@
-# Dusklight 2 UWP — Xbox installation
+# Dusklight 2.0.1 UWP — Xbox installation
 
 This is an unofficial community UWP port of Dusklight 2. It is not an official
 TwilitRealm release. The official Dusklight site is https://twilitrealm.dev/.
@@ -9,13 +9,13 @@ LocalState, saves, configuration, mods, or textures.
 
 1. Put the Xbox in Developer Mode.
 2. Trust `Dusklight2UWP.cer` on the PC used for deployment.
-3. In Xbox Device Portal, deploy `Dusklight2UWP_2.0.0.0_x64.msix` together
+3. In Xbox Device Portal, deploy `Dusklight2UWP_2.0.1.0_x64.msix` together
    with the included x64 Microsoft VCLibs dependency.
 4. Launch Dusklight 2 UWP and select a supported Twilight Princess disc image
    dumped from a copy you own.
 
 The package contains no game image or copyrighted game data. It includes only
-the three modules bundled by the exact upstream Dusklight 2.0 source:
+the three modules bundled by the exact upstream Dusklight 2.0.1 source:
 Luau Runtime, Cosmetics, and Randomizer. It does not contain the private
 `.634-.660` feature patches.
 

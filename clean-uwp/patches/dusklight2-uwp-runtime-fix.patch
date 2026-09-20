@@ -1,0 +1,172 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bfb99c8..af965b9 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -245,6 +245,12 @@ if (DUSK_HAS_FUNCHOOK)
+ endif ()
+ FetchContent_MakeAvailable(${_fetch_content_deps})
+ 
++if (DUSK_UWP AND TARGET funchook-static)
++    # PatchFunchook.cmake removes its desktop-only PSAPI diagnostics under this
++    # define. Funchook remains enabled because the official native mods use it.
++    target_compile_definitions(funchook-static PRIVATE _UWP=1)
++endif ()
++
+ if (DUSK_HAS_FUNCHOOK AND APPLE)
+     target_sources(funchook-static PRIVATE src/dusk/mods/loader/code_patch_macos.cpp)
+     target_include_directories(funchook-static PRIVATE src/dusk/mods/loader)
+diff --git a/cmake/PatchFunchook.cmake b/cmake/PatchFunchook.cmake
+index cbd91fc..89d6bf9 100644
+--- a/cmake/PatchFunchook.cmake
++++ b/cmake/PatchFunchook.cmake
+@@ -11,6 +11,41 @@ if (NOT _content MATCHES "CAPSTONE_FIX_SCRIPT")
+     file(WRITE "${SOURCE_DIR}/cmake/capstone.cmake.in" "${_content}")
+ endif ()
+ 
++# The UWP build still needs Funchook for the official native mods, but the
++# upstream Windows backend always imports PSAPI.DLL for optional debug-only
++# module-name logging. PSAPI is a desktop dependency and prevents the Xbox
++# AppContainer process from loading. Keep the diagnostic on desktop builds and
++# compile it out of the UWP feed.
++file(READ "${SOURCE_DIR}/CMakeLists.txt" _content)
++if (NOT _content MATCHES "DUSK_UWP AND FUNCHOOK_DEPS")
++    string(REPLACE
++        "  set(FUNCHOOK_DEPS psapi)"
++        "  if (DUSK_UWP)\n    set(FUNCHOOK_DEPS) # UWP: PSAPI is desktop-only\n  else ()\n    set(FUNCHOOK_DEPS psapi)\n  endif () # DUSK_UWP AND FUNCHOOK_DEPS"
++        _content "${_content}")
++    file(WRITE "${SOURCE_DIR}/CMakeLists.txt" "${_content}")
++endif ()
++
++file(READ "${SOURCE_DIR}/src/funchook_windows.c" _content)
++if (NOT _content MATCHES "DUSK UWP: omit desktop-only PSAPI diagnostics")
++    string(REPLACE
++        "#define PSAPI_VERSION 1\n#include <stdint.h>"
++        "/* DUSK UWP: omit desktop-only PSAPI diagnostics. */\n#ifndef _UWP\n#define PSAPI_VERSION 1\n#endif\n#include <stdint.h>"
++        _content "${_content}")
++    string(REPLACE
++        "#include <psapi.h>"
++        "#ifndef _UWP\n#include <psapi.h>\n#endif"
++        _content "${_content}")
++    string(REPLACE
++        "    if (*funchook_debug_file != '\\0') {\n        DWORD len = GetMappedFileNameA(GetCurrentProcess(), func, path, sizeof(path));\n        if (len > 0) {\n            funchook_log(funchook, \"  func %p is in %.*s\\n\", func, (int)len, path);\n        }\n    }"
++        "#ifndef _UWP\n    if (*funchook_debug_file != '\\0') {\n        DWORD len = GetMappedFileNameA(GetCurrentProcess(), func, path, sizeof(path));\n        if (len > 0) {\n            funchook_log(funchook, \"  func %p is in %.*s\\n\", func, (int)len, path);\n        }\n    }\n#endif"
++        _content "${_content}")
++    string(REPLACE
++        "                if (*funchook_debug_file != '\\0') {\n                    DWORD len = GetMappedFileNameA(GetCurrentProcess(), func, path, sizeof(path));\n                    if (len > 0) {\n                        funchook_log(funchook, \"  -> func %p in %.*s\\n\", func, (int)len, path);\n                    } else {\n                        funchook_log(funchook, \"  -> func %p\\n\", func);\n                    }\n                }"
++        "#ifndef _UWP\n                if (*funchook_debug_file != '\\0') {\n                    DWORD len = GetMappedFileNameA(GetCurrentProcess(), func, path, sizeof(path));\n                    if (len > 0) {\n                        funchook_log(funchook, \"  -> func %p in %.*s\\n\", func, (int)len, path);\n                    } else {\n                        funchook_log(funchook, \"  -> func %p\\n\", func);\n                    }\n                }\n#endif"
++        _content "${_content}")
++    file(WRITE "${SOURCE_DIR}/src/funchook_windows.c" "${_content}")
++endif ()
++
+ file(READ "${SOURCE_DIR}/src/funchook.c" _content)
+ if (NOT _content MATCHES "commit_code_patch")
+     string(REPLACE "#include \"funchook_internal.h\""
+diff --git a/cmake/ModSDK.cmake b/cmake/ModSDK.cmake
+index db3ca23..6aa1c65 100644
+--- a/cmake/ModSDK.cmake
++++ b/cmake/ModSDK.cmake
+@@ -29,6 +29,9 @@ function(_mod_lib_info out_platform_var out_name_var)
+     string(TOLOWER "${CMAKE_SYSTEM_NAME}" _platform)
+     if (_platform STREQUAL "darwin")
+         set(_platform "macos")
++    elseif (_platform STREQUAL "windowsstore")
++        # Store-native DLLs use the same runtime bundle key as desktop Windows.
++        set(_platform "windows")
+     endif ()
+     string(TOLOWER "${_arch}" _arch)
+     if (_arch MATCHES "^(i[3-6]86|x86)$")
+diff --git a/platforms/uwp/CMakeLists.txt b/platforms/uwp/CMakeLists.txt
+index 782cd13..aa1579c 100644
+--- a/platforms/uwp/CMakeLists.txt
++++ b/platforms/uwp/CMakeLists.txt
+@@ -13,8 +13,9 @@ include(AssetDeploy)
+ set(DUSK_DIR "" CACHE PATH "Dusklight UWP feed build directory")
+ set(DUSK_SOURCE_DIR "" CACHE PATH "Patched Dusklight source directory")
+ set(UWP_DEP_SOURCE_DIR "" CACHE PATH "Pinned SternXD/uwp-dep checkout")
++set(BUNDLED_MOD_SOURCE_DIR "" CACHE PATH "Store-native bundled mod staging directory")
+ 
+-foreach (_required_dir DUSK_DIR DUSK_SOURCE_DIR UWP_DEP_SOURCE_DIR)
++foreach (_required_dir DUSK_DIR DUSK_SOURCE_DIR UWP_DEP_SOURCE_DIR BUNDLED_MOD_SOURCE_DIR)
+     if ("${${_required_dir}}" STREQUAL "" OR NOT IS_DIRECTORY "${${_required_dir}}")
+         message(FATAL_ERROR "${_required_dir} must name an existing directory")
+     endif ()
+@@ -28,9 +29,30 @@ set(_bundled_mod_names
+     randomizer)
+ set(_bundled_mod_files)
+ foreach (_mod IN LISTS _bundled_mod_names)
+-    list(APPEND _bundled_mod_files "${DUSK_DIR}/bundled_mods/${_mod}.dusk")
++    set(_mod_dir "${BUNDLED_MOD_SOURCE_DIR}/${_mod}")
++    if (NOT EXISTS "${_mod_dir}/mod.json")
++        message(FATAL_ERROR "Store-native bundled mod is missing mod.json: ${_mod_dir}")
++    endif ()
++    if (NOT EXISTS "${_mod_dir}/lib/windows-amd64/mod.dll")
++        message(FATAL_ERROR "Store-native bundled mod is missing its x64 DLL: ${_mod_dir}")
++    endif ()
++    file(GLOB_RECURSE _mod_files LIST_DIRECTORIES FALSE "${_mod_dir}/*")
++    foreach (_file IN LISTS _mod_files)
++        file(RELATIVE_PATH _relative "${_mod_dir}" "${_file}")
++        get_filename_component(_relative_dir "${_relative}" DIRECTORY)
++        if (_relative_dir STREQUAL "")
++            set(_deploy_dir "mods/${_mod}")
++        else ()
++            set(_deploy_dir "mods/${_mod}/${_relative_dir}")
++        endif ()
++        set_source_files_properties("${_file}" PROPERTIES
++            VS_COPY_TO_OUT_DIR Always
++            VS_DEPLOYMENT_CONTENT TRUE
++            VS_DEPLOYMENT_LOCATION "${_deploy_dir}")
++        list(APPEND _bundled_mod_files "${_file}")
++    endforeach ()
+ endforeach ()
+-foreach (_required_file "${_feed_archive}" "${_feed_def}" ${_bundled_mod_files})
++foreach (_required_file "${_feed_archive}" "${_feed_def}")
+     if (NOT EXISTS "${_required_file}")
+         message(FATAL_ERROR "Required UWP feed output is missing: ${_required_file}")
+     endif ()
+@@ -93,13 +115,9 @@ set_source_files_properties(${_asset_files} PROPERTIES
+         VS_DEPLOYMENT_LOCATION "Assets")
+ target_sources(${PROJECT_NAME} PRIVATE ${_asset_files})
+ 
+-# Bundle only the three mods that the exact upstream Dusklight 2.0 tree marks
+-# BUNDLE: Luau Runtime, Cosmetics, and Randomizer. The loader extracts native
+-# libraries to LocalState before LoadLibraryExW is called.
+-set_source_files_properties(${_bundled_mod_files} PROPERTIES
+-        VS_COPY_TO_OUT_DIR Always
+-        VS_DEPLOYMENT_CONTENT TRUE
+-        VS_DEPLOYMENT_LOCATION "mods")
++# Bundle only the three mods marked BUNDLE by official Dusklight. They are
++# Store-native DLLs deployed as signed directory bundles, so the loader opens
++# them in place instead of extracting executable code to writable LocalState.
+ target_sources(${PROJECT_NAME} PRIVATE ${_bundled_mod_files})
+ 
+ uwp_pkg(${PROJECT_NAME} "${DUSK_SOURCE_DIR}/res" "res")
+@@ -136,6 +154,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
+ target_link_options(${PROJECT_NAME} PRIVATE
+     "/DEF:${_feed_def}"
+     "/WHOLEARCHIVE:${_feed_archive}"
++    /ENTRY:WinMainCRTStartup
+     /FUNCTIONPADMIN
+     /OPT:NOICF
+     /INCREMENTAL:NO
+diff --git a/platforms/uwp/Package.appxmanifest b/platforms/uwp/Package.appxmanifest
+index 7009246..e612446 100644
+--- a/platforms/uwp/Package.appxmanifest
++++ b/platforms/uwp/Package.appxmanifest
+@@ -8,7 +8,7 @@
+   <Identity
+     Name="Dusklight2UWP"
+     Publisher="CN=Dusklight2UWP"
+-    Version="2.0.0.0" />
++    Version="2.0.1.0" />
+   <mp:PhoneIdentity
+     PhoneProductId="5ebf7f19-c209-5214-94c8-5b324befe907"
+     PhonePublisherId="00000000-0000-0000-0000-000000000000" />
+@@ -32,7 +32,7 @@
+         DisplayName="Dusklight 2 UWP"
+         Square150x150Logo="Assets\Square150x150Logo.png"
+         Square44x44Logo="Assets\Square44x44Logo.png"
+-        Description="Unofficial community Xbox/UWP port of Dusklight 2"
++        Description="Unofficial community Xbox/UWP port of Dusklight 2.0.1"
+         BackgroundColor="transparent">
+         <uap:SplashScreen Image="Assets\SplashScreen.png" />
+         <uap:DefaultTile
