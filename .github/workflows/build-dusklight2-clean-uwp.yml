@@ -264,6 +264,27 @@ jobs:
           Save-BrandAsset 620 300 "$assetDir\Wide310x150Logo.scale-200.png" $false
           Save-BrandAsset 1240 600 "$assetDir\SplashScreen.scale-200.png" $true
 
+          # AppX rejects visual assets larger than 200 KiB. System.Drawing writes
+          # full-colour PNGs, so deterministically palette-compress only assets
+          # that exceed that limit while preserving their dimensions and alpha.
+          $appxAssetLimit = 204800
+          foreach ($asset in Get-ChildItem $assetDir -File -Filter '*.png') {
+            foreach ($colourCount in @(256, 128, 64)) {
+              if ((Get-Item $asset.FullName).Length -le $appxAssetLimit) { break }
+              $optimized = "$($asset.FullName).optimized.png"
+              & magick.exe $asset.FullName -strip +dither -colors $colourCount `
+                -define png:compression-level=9 "PNG8:$optimized"
+              if ($LASTEXITCODE -ne 0 -or -not (Test-Path $optimized -PathType Leaf)) {
+                throw "Failed to optimize AppX artwork: $($asset.Name)"
+              }
+              Move-Item -Force $optimized $asset.FullName
+            }
+            $finalAsset = Get-Item $asset.FullName
+            if ($finalAsset.Length -gt $appxAssetLimit) {
+              throw "AppX artwork exceeds 200 KiB after optimization: $($asset.Name)"
+            }
+          }
+
           $expectedSizes = @{
             'LockScreenLogo.scale-200.png' = @(48,48)
             'SplashScreen.scale-200.png' = @(1240,600)
