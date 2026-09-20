@@ -1,0 +1,584 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c0ab5aa..6e783e8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -70,6 +70,7 @@ endif ()
+ if (CMAKE_SYSTEM_NAME STREQUAL Linux)
+   set(DAWN_USE_WAYLAND ON CACHE BOOL "Enable support for Wayland surface" FORCE)
+ endif ()
++option(DUSK_UWP "Build the static UWP feed consumed by the Xbox package wrapper" OFF)
+ set(AURORA_ENABLE_DVD ON CACHE BOOL "Enable DVD API support" FORCE)
+ set(AURORA_ENABLE_CARD ON CACHE BOOL "Enable CARD API support" FORCE)
+ set(AURORA_ENABLE_THP ON CACHE BOOL "Enable THP decoder" FORCE)
+@@ -276,6 +277,12 @@ include(cmake/GameABIConfig.cmake)
+ 
+ find_package(Threads REQUIRED)
+ set(GAME_COMPILE_DEFS DUSK_BUILDING_GAME=1)
++if (DUSK_UWP)
++    # The feed is compiled with the desktop MSVC driver, then linked by the
++    # WindowsStore package project. Keep UWP-only source guards consistent in
++    # every game/JSystem object archive, not just the final static library.
++    list(APPEND GAME_COMPILE_DEFS _UWP=1)
++endif ()
+ set(GAME_LIBS aurora::core aurora::gx aurora::gd aurora::si aurora::vi aurora::pad aurora::mtx aurora::os aurora::dvd aurora::thp
+     aurora::card borealis::http borealis::cli borealis::crash borealis::data borealis::disc borealis::discord borealis::file_select borealis::io borealis::log borealis::net borealis::presentation borealis::sentry borealis::update borealis::ws freeverb cxxopts::cxxopts absl::flat_hash_map nlohmann_json::nlohmann_json TracyClient fmt::fmt
+     Threads::Threads zstd::libzstd dusklight_game_headers picosha2 PNG::PNG)
+@@ -369,6 +376,8 @@ target_precompile_headers(dusk_internal PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMA
+ 
+ if(ANDROID)
+     add_library(dusklight SHARED ${GAME_FILES} ${miniz_SOURCE_DIR}/miniz.c)
++elseif (DUSK_UWP)
++    add_library(dusklight STATIC ${GAME_FILES} ${miniz_SOURCE_DIR}/miniz.c)
+ else ()
+     add_executable(dusklight ${GAME_FILES} ${miniz_SOURCE_DIR}/miniz.c)
+ endif ()
+@@ -386,8 +395,12 @@ if (DUSK_ENABLE_CODE_MODS)
+         include(cmake/WindowsExports.cmake)
+         setup_windows_exports(dusklight)
+     endif ()
+-    # Post-link symbol manifest: hookable-surface name->address map keyed to the build.
+-    setup_symbol_manifest(dusklight)
++    # The UWP feed is a static archive. Its final PE image and PDB are produced
++    # by platforms/uwp, which embeds the symbol manifest after that link.
++    if (NOT DUSK_UWP)
++        # Post-link symbol manifest: hookable-surface name->address map keyed to the build.
++        setup_symbol_manifest(dusklight)
++    endif ()
+ endif ()
+ 
+ # Hook reliability: prevent auto-inlining, guarantee patchable function entries,
+@@ -429,7 +442,7 @@ if (DUSK_ENABLE_CODE_MODS)
+         endforeach ()
+     endif ()
+ 
+-    if (MSVC)
++    if (MSVC AND NOT DUSK_UWP)
+         if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+             set(DUSK_PATCHABLE_ENTRY_FLAG $<$<COMPILE_LANGUAGE:C,CXX>:/hotpatch>)
+         endif ()
+@@ -463,7 +476,7 @@ if (DUSK_ENABLE_CODE_MODS)
+     endif ()
+ endif ()
+ 
+-if (WIN32)
++if (WIN32 AND NOT DUSK_UWP)
+     target_link_libraries(dusklight PRIVATE Psapi)
+ endif ()
+ if (APPLE)
+@@ -476,7 +489,7 @@ elseif (UNIX)
+     target_link_options(dusklight PRIVATE -rdynamic)
+ endif ()
+ 
+-if (TARGET crashpad_handler)
++if (TARGET crashpad_handler AND NOT DUSK_UWP)
+     add_dependencies(dusklight crashpad_handler)
+     add_custom_command(TARGET dusklight POST_BUILD
+         COMMAND ${CMAKE_COMMAND} -E copy_if_different
+@@ -491,7 +504,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL Linux)
+     target_link_libraries(dusklight PRIVATE dl)
+ endif ()
+ 
+-if (NOT APPLE)
++if (NOT APPLE AND NOT DUSK_UWP)
+     add_custom_command(TARGET dusklight POST_BUILD
+         COMMAND ${CMAKE_COMMAND} -E copy_directory
+             "${CMAKE_SOURCE_DIR}/res"
+@@ -500,7 +513,7 @@ if (NOT APPLE)
+     )
+ endif ()
+ 
+-if (WIN32)
++if (WIN32 AND NOT DUSK_UWP)
+     set(DUSK_WINDOWS_RESOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platforms/windows)
+     set(DUSK_WINDOWS_ICON_PNG ${CMAKE_CURRENT_SOURCE_DIR}/res/icon.png)
+     set(DUSK_WINDOWS_ICON_ICO ${CMAKE_CURRENT_BINARY_DIR}/dusklight.ico)
+@@ -610,8 +623,10 @@ if (APPLE)
+     endif ()
+ endif ()
+ 
+-include(extern/aurora/cmake/AuroraCopyRuntimeDLLs.cmake)
+-aurora_copy_runtime_dlls(dusklight)
++if (NOT DUSK_UWP)
++    include(extern/aurora/cmake/AuroraCopyRuntimeDLLs.cmake)
++    aurora_copy_runtime_dlls(dusklight)
++endif ()
+ 
+ if (DUSK_SELECTED_OPT)
+     if (CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+@@ -651,7 +666,7 @@ function(get_target_prefix target result_var)
+ endfunction()
+ list(APPEND BINARY_TARGETS dusklight)
+ set(EXTRA_TARGETS "")
+-if (TARGET crashpad_handler)
++if (TARGET crashpad_handler AND NOT DUSK_UWP)
+     list(APPEND EXTRA_TARGETS crashpad_handler)
+ endif ()
+ if (DUSK_PACKAGE_INSTALL)
+@@ -659,7 +674,9 @@ if (DUSK_PACKAGE_INSTALL)
+ else()
+     install(TARGETS ${BINARY_TARGETS} ${EXTRA_TARGETS} DESTINATION ${CMAKE_INSTALL_PREFIX})
+ endif()
+-aurora_install_runtime_dlls(dusklight ${CMAKE_INSTALL_PREFIX})
++if (NOT DUSK_UWP)
++    aurora_install_runtime_dlls(dusklight ${CMAKE_INSTALL_PREFIX})
++endif ()
+ if (NOT APPLE)
+     if (DUSK_PACKAGE_INSTALL)
+         install(DIRECTORY ${CMAKE_SOURCE_DIR}/res DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dusklight)
+@@ -671,7 +688,7 @@ if (CMAKE_BUILD_TYPE STREQUAL Debug OR CMAKE_BUILD_TYPE STREQUAL RelWithDebInfo
+     set(DEBUG_FILES_LIST "")
+     foreach (target IN LISTS BINARY_TARGETS EXTRA_TARGETS)
+         get_target_output_name(${target} output_name)
+-        if (WIN32)
++        if (WIN32 AND NOT DUSK_UWP)
+             install(FILES $<TARGET_PDB_FILE:${target}> DESTINATION ${CMAKE_INSTALL_PREFIX} OPTIONAL)
+         elseif (APPLE)
+             get_target_prefix(${target} target_prefix)
+diff --git a/cmake/WindowsExports.cmake b/cmake/WindowsExports.cmake
+index dae7f06..75a2226 100644
+--- a/cmake/WindowsExports.cmake
++++ b/cmake/WindowsExports.cmake
+@@ -28,7 +28,13 @@ function(setup_windows_exports target)
+         set(_config_subdir "$<CONFIG>/")
+     endif ()
+ 
+-    set(_rsp_lines "$<TARGET_OBJECTS:${target}>")
++    if (DUSK_UWP)
++        # symgen accepts COFF archives. Running after the static feed is built
++        # also guarantees dusk_internal's objects have been folded into it.
++        set(_rsp_lines "$<TARGET_FILE:${target}>")
++    else ()
++        set(_rsp_lines "$<TARGET_OBJECTS:${target}>")
++    endif ()
+     foreach (_lib IN LISTS JSYSTEM_LIBRARIES)
+         list(APPEND _rsp_lines "$<TARGET_FILE:${_lib}>")
+     endforeach ()
+@@ -54,9 +60,15 @@ function(setup_windows_exports target)
+         endif ()
+     endif ()
+ 
+-    # Generate curated exports list from the main binary
++    # Generate curated exports list from the main binary (or from the completed
++    # static feed for the two-stage UWP package build).
+     set(_def "${CMAKE_BINARY_DIR}/${_config_subdir}dusklight_exports.def")
+-    add_custom_command(TARGET ${target} PRE_LINK
++    if (DUSK_UWP)
++        set(_exports_phase POST_BUILD)
++    else ()
++        set(_exports_phase PRE_LINK)
++    endif ()
++    add_custom_command(TARGET ${target} ${_exports_phase}
+             COMMAND "${_symgen}" def
+             "@${_rsp}"
+             --out "${_def}"
+@@ -67,18 +79,25 @@ function(setup_windows_exports target)
+             ${_forward_args}
+             COMMENT "Generating dusklight exports"
+             VERBATIM)
+-    target_link_options(${target} PRIVATE "/DEF:${_def}")
++    if (NOT DUSK_UWP)
++        target_link_options(${target} PRIVATE "/DEF:${_def}")
++    endif ()
+ 
+     # Generate import library for mods to link against.
+     set(_implib "${CMAKE_BINARY_DIR}/${_config_subdir}dusklight_imports.lib")
+     get_filename_component(_compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+     find_program(DUSK_LLVM_DLLTOOL llvm-dlltool HINTS "${_compiler_dir}")
++    if (DUSK_UWP)
++        set(_export_dll_name Dusklight2UWP.exe)
++    else ()
++        set(_export_dll_name dusklight.exe)
++    endif ()
+     if (DUSK_LLVM_DLLTOOL)
+-        set(_implib_cmd "${DUSK_LLVM_DLLTOOL}" -d "${_def}" -D dusklight.exe
++        set(_implib_cmd "${DUSK_LLVM_DLLTOOL}" -d "${_def}" -D "${_export_dll_name}"
+                 -m "${_dlltool_machine}" -l "${_implib}")
+     else ()
+         set(_implib_cmd "${CMAKE_AR}" /nologo "/def:${_def}" "/machine:${_lib_machine}"
+-                /name:dusklight.exe "/out:${_implib}")
++                "/name:${_export_dll_name}" "/out:${_implib}")
+     endif ()
+     add_custom_command(TARGET ${target} POST_BUILD
+             COMMAND ${_implib_cmd}
+diff --git a/platforms/uwp/CMakeLists.txt b/platforms/uwp/CMakeLists.txt
+new file mode 100644
+index 0000000..782cd13
+--- /dev/null
++++ b/platforms/uwp/CMakeLists.txt
+@@ -0,0 +1,159 @@
++cmake_minimum_required(VERSION 3.25)
++
++set(CMAKE_SYSTEM_NAME WindowsStore)
++set(CMAKE_SYSTEM_VERSION 10.0)
++set(CMAKE_CXX_STANDARD 20)
++set(CMAKE_CXX_STANDARD_REQUIRED ON)
++set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "" FORCE)
++
++project(Dusklight2UWP LANGUAGES CXX)
++list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
++include(AssetDeploy)
++
++set(DUSK_DIR "" CACHE PATH "Dusklight UWP feed build directory")
++set(DUSK_SOURCE_DIR "" CACHE PATH "Patched Dusklight source directory")
++set(UWP_DEP_SOURCE_DIR "" CACHE PATH "Pinned SternXD/uwp-dep checkout")
++
++foreach (_required_dir DUSK_DIR DUSK_SOURCE_DIR UWP_DEP_SOURCE_DIR)
++    if ("${${_required_dir}}" STREQUAL "" OR NOT IS_DIRECTORY "${${_required_dir}}")
++        message(FATAL_ERROR "${_required_dir} must name an existing directory")
++    endif ()
++endforeach ()
++
++set(_feed_archive "${DUSK_DIR}/dusklight.lib")
++set(_feed_def "${DUSK_DIR}/dusklight_exports.def")
++set(_bundled_mod_names
++    luau_runtime
++    cosmetics
++    randomizer)
++set(_bundled_mod_files)
++foreach (_mod IN LISTS _bundled_mod_names)
++    list(APPEND _bundled_mod_files "${DUSK_DIR}/bundled_mods/${_mod}.dusk")
++endforeach ()
++foreach (_required_file "${_feed_archive}" "${_feed_def}" ${_bundled_mod_files})
++    if (NOT EXISTS "${_required_file}")
++        message(FATAL_ERROR "Required UWP feed output is missing: ${_required_file}")
++    endif ()
++endforeach ()
++
++set(_uwp_x64 "${UWP_DEP_SOURCE_DIR}/x64")
++foreach (_required_file
++        "${_uwp_x64}/lib/SDL3.lib"
++        "${_uwp_x64}/lib/webgpu_dawn.lib"
++        "${_uwp_x64}/lib/nod.lib"
++        "${_uwp_x64}/lib/libuwp.lib")
++    if (NOT EXISTS "${_required_file}")
++        message(FATAL_ERROR "Pinned UWP dependency output is missing: ${_required_file}")
++    endif ()
++endforeach ()
++
++add_executable(${PROJECT_NAME} WIN32 main.cpp)
++set_directory_properties(PROPERTIES VS_STARTUP_PROJECT ${PROJECT_NAME})
++target_include_directories(${PROJECT_NAME} PRIVATE "${_uwp_x64}/include")
++target_compile_definitions(${PROJECT_NAME} PRIVATE AURORA_WINDOWS_STORE=1 _UWP=1)
++
++set(_runtime_dll_names
++    dxcompiler.dll
++    dxil.dll
++    libuwp.dll
++    nod.dll
++    SDL3.dll
++    webgpu_dawn.dll
++    libpng16.dll
++    z.dll)
++set(_runtime_files Package.appxmanifest)
++foreach (_dll IN LISTS _runtime_dll_names)
++    if (NOT EXISTS "${_uwp_x64}/bin/${_dll}")
++        message(FATAL_ERROR "Pinned UWP runtime DLL is missing: ${_uwp_x64}/bin/${_dll}")
++    endif ()
++    list(APPEND _runtime_files "${_uwp_x64}/bin/${_dll}")
++endforeach ()
++set_source_files_properties(${_runtime_files} PROPERTIES
++        VS_COPY_TO_OUT_DIR Always
++        VS_DEPLOYMENT_CONTENT TRUE
++        VS_DEPLOYMENT_LOCATION ".")
++target_sources(${PROJECT_NAME} PRIVATE ${_runtime_files})
++
++set(_asset_files
++    Assets/LockScreenLogo.scale-200.png
++    Assets/SplashScreen.scale-200.png
++    Assets/Square150x150Logo.scale-200.png
++    Assets/Square310x310Logo.scale-200.png
++    Assets/Square44x44Logo.scale-200.png
++    Assets/Square44x44Logo.targetsize-24_altform-unplated.png
++    Assets/StoreLogo.png
++    Assets/Wide310x150Logo.scale-200.png)
++foreach (_asset IN LISTS _asset_files)
++    if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_asset}")
++        message(FATAL_ERROR "UWP package artwork is missing: ${_asset}")
++    endif ()
++endforeach ()
++set_source_files_properties(${_asset_files} PROPERTIES
++        VS_DEPLOYMENT_CONTENT TRUE
++        VS_DEPLOYMENT_LOCATION "Assets")
++target_sources(${PROJECT_NAME} PRIVATE ${_asset_files})
++
++# Bundle only the three mods that the exact upstream Dusklight 2.0 tree marks
++# BUNDLE: Luau Runtime, Cosmetics, and Randomizer. The loader extracts native
++# libraries to LocalState before LoadLibraryExW is called.
++set_source_files_properties(${_bundled_mod_files} PROPERTIES
++        VS_COPY_TO_OUT_DIR Always
++        VS_DEPLOYMENT_CONTENT TRUE
++        VS_DEPLOYMENT_LOCATION "mods")
++target_sources(${PROJECT_NAME} PRIVATE ${_bundled_mod_files})
++
++uwp_pkg(${PROJECT_NAME} "${DUSK_SOURCE_DIR}/res" "res")
++
++# The feed is single-config Ninja output. Link every static archive produced by
++# the requested core/module targets so new Borealis/Aurora leaf libraries do not
++# silently disappear when their dependency graph evolves.
++file(GLOB_RECURSE _feed_libraries LIST_DIRECTORIES FALSE "${DUSK_DIR}/*.lib")
++list(FILTER _feed_libraries EXCLUDE REGEX "[/\\\\]CMakeFiles[/\\\\]")
++list(FILTER _feed_libraries EXCLUDE REGEX "[/\\\\](tests?|examples?)[/\\\\]")
++list(FILTER _feed_libraries EXCLUDE REGEX "dusklight_imports[.]lib$")
++list(FILTER _feed_libraries EXCLUDE REGEX "[/\\\\]mods[/\\\\].*[.]lib$")
++list(REMOVE_ITEM _feed_libraries "${_feed_archive}")
++list(REMOVE_DUPLICATES _feed_libraries)
++
++set(_uwp_import_libraries
++    "${_uwp_x64}/lib/libuwp.lib"
++    "${_uwp_x64}/lib/nod.lib"
++    "${_uwp_x64}/lib/SDL3.lib"
++    "${_uwp_x64}/lib/webgpu_dawn.lib"
++    "${_uwp_x64}/lib/libpng16.lib"
++    "${_uwp_x64}/lib/z.lib")
++
++target_link_libraries(${PROJECT_NAME} PRIVATE
++    "${_feed_archive}"
++    ${_feed_libraries}
++    ${_uwp_import_libraries}
++    WindowsApp.lib
++    OneCore.lib
++    ntdll.lib
++    DXGI.lib
++    Ws2_32.lib)
++
++target_link_options(${PROJECT_NAME} PRIVATE
++    "/DEF:${_feed_def}"
++    "/WHOLEARCHIVE:${_feed_archive}"
++    /FUNCTIONPADMIN
++    /OPT:NOICF
++    /INCREMENTAL:NO
++    /NODEFAULTLIB:libcmt
++    /NODEFAULTLIB:libcmtd)
++
++# Embed the final executable's own PDB-derived symbol database. Runtime
++# by-name hooks reject a manifest generated from an intermediate archive.
++file(GLOB _symgen_candidates LIST_DIRECTORIES FALSE
++    "${DUSK_DIR}/_deps/symgen/symgen-windows-*.exe")
++list(LENGTH _symgen_candidates _symgen_count)
++if (NOT _symgen_count EQUAL 1)
++    message(FATAL_ERROR "Expected exactly one pinned symgen executable under ${DUSK_DIR}/_deps/symgen")
++endif ()
++list(GET _symgen_candidates 0 _symgen)
++configure_file(
++    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/UwpSymbolManifest.props.in"
++    "${CMAKE_CURRENT_BINARY_DIR}/UwpSymbolManifest.props"
++    @ONLY)
++set_property(TARGET ${PROJECT_NAME} PROPERTY VS_USER_PROPS
++    "${CMAKE_CURRENT_BINARY_DIR}/UwpSymbolManifest.props")
+diff --git a/platforms/uwp/Package.appxmanifest b/platforms/uwp/Package.appxmanifest
+new file mode 100644
+index 0000000..7009246
+--- /dev/null
++++ b/platforms/uwp/Package.appxmanifest
+@@ -0,0 +1,54 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Package
++  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
++  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
++  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
++  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
++  IgnorableNamespaces="uap mp rescap">
++  <Identity
++    Name="Dusklight2UWP"
++    Publisher="CN=Dusklight2UWP"
++    Version="2.0.0.0" />
++  <mp:PhoneIdentity
++    PhoneProductId="5ebf7f19-c209-5214-94c8-5b324befe907"
++    PhonePublisherId="00000000-0000-0000-0000-000000000000" />
++  <Properties>
++    <DisplayName>Dusklight 2 UWP</DisplayName>
++    <PublisherDisplayName>Dusklight UWP Community Build</PublisherDisplayName>
++    <Logo>Assets\StoreLogo.png</Logo>
++  </Properties>
++  <Dependencies>
++    <TargetDeviceFamily
++      Name="Windows.Universal"
++      MinVersion="10.0.0.0"
++      MaxVersionTested="10.0.26100.0" />
++  </Dependencies>
++  <Resources>
++    <Resource Language="x-generate" />
++  </Resources>
++  <Applications>
++    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="uwp.App">
++      <uap:VisualElements
++        DisplayName="Dusklight 2 UWP"
++        Square150x150Logo="Assets\Square150x150Logo.png"
++        Square44x44Logo="Assets\Square44x44Logo.png"
++        Description="Unofficial community Xbox/UWP port of Dusklight 2"
++        BackgroundColor="transparent">
++        <uap:SplashScreen Image="Assets\SplashScreen.png" />
++        <uap:DefaultTile
++          Wide310x150Logo="Assets\Wide310x150Logo.png"
++          Square310x310Logo="Assets\Square310x310Logo.png" />
++      </uap:VisualElements>
++    </Application>
++  </Applications>
++  <Capabilities>
++    <rescap:Capability Name="runFullTrust" />
++    <rescap:Capability Name="broadFileSystemAccess" />
++    <rescap:Capability Name="expandedResources" />
++    <Capability Name="internetClient" />
++    <Capability Name="internetClientServer" />
++    <Capability Name="privateNetworkClientServer" />
++    <Capability Name="codeGeneration" />
++    <uap:Capability Name="removableStorage" />
++  </Capabilities>
++</Package>
+diff --git a/platforms/uwp/cmake/AssetDeploy.cmake b/platforms/uwp/cmake/AssetDeploy.cmake
+new file mode 100644
+index 0000000..19aba3e
+--- /dev/null
++++ b/platforms/uwp/cmake/AssetDeploy.cmake
+@@ -0,0 +1,18 @@
++function(uwp_pkg target source_dir destination)
++    file(GLOB_RECURSE _files CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE "${source_dir}/*")
++    foreach (_src IN LISTS _files)
++        file(RELATIVE_PATH _relative "${source_dir}" "${_src}")
++        get_filename_component(_relative_dir "${_relative}" DIRECTORY)
++        if (_relative_dir STREQUAL "" OR _relative_dir STREQUAL ".")
++            set(_deploy_dir "${destination}")
++        else ()
++            string(REPLACE "\\" "/" _relative_dir "${_relative_dir}")
++            set(_deploy_dir "${destination}/${_relative_dir}")
++        endif ()
++        set_source_files_properties("${_src}" PROPERTIES
++                VS_COPY_TO_OUT_DIR Always
++                VS_DEPLOYMENT_CONTENT TRUE
++                VS_DEPLOYMENT_LOCATION "${_deploy_dir}")
++        target_sources(${target} PRIVATE "${_src}")
++    endforeach ()
++endfunction()
+diff --git a/platforms/uwp/cmake/UwpSymbolManifest.props.in b/platforms/uwp/cmake/UwpSymbolManifest.props.in
+new file mode 100644
+index 0000000..40bef4e
+--- /dev/null
++++ b/platforms/uwp/cmake/UwpSymbolManifest.props.in
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
++  <Target Name="EmbedFinalUwpSymbolManifest" AfterTargets="Link">
++    <PropertyGroup>
++      <TprSymbolPdb Condition="'$(TargetPdbPath)' != ''">$(TargetPdbPath)</TprSymbolPdb>
++      <TprSymbolPdb Condition="'$(TprSymbolPdb)' == ''">$(TargetDir)$(TargetName).pdb</TprSymbolPdb>
++    </PropertyGroup>
++    <Error Condition="!Exists('$(TargetPath)')" Text="Final UWP executable is missing: $(TargetPath)" />
++    <Error Condition="!Exists('$(TprSymbolPdb)')" Text="Final UWP PDB is missing: $(TprSymbolPdb)" />
++    <Message Text="Embedding final UWP symbol manifest before packaging" Importance="high" />
++    <Exec
++      Command="&quot;@_symgen@&quot; manifest --pdb &quot;$(TprSymbolPdb)&quot; --embed &quot;$(TargetPath)&quot;"
++      WorkingDirectory="@DUSK_SOURCE_DIR@" />
++  </Target>
++</Project>
+diff --git a/platforms/uwp/main.cpp b/platforms/uwp/main.cpp
+new file mode 100644
+index 0000000..c404b5a
+--- /dev/null
++++ b/platforms/uwp/main.cpp
+@@ -0,0 +1,14 @@
++#include <Windows.h>
++
++#include <SDL3/SDL.h>
++#include <SDL3/SDL_main.h>
++
++int bootstrap(int argc, char** argv) {
++    SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "true");
++    SDL_SetHint(SDL_HINT_JOYSTICK_WGI, "true");
++    return SDL_main(argc, argv);
++}
++
++int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
++    return SDL_RunApp(0, nullptr, bootstrap, nullptr);
++}
+diff --git a/src/dusk/main.cpp b/src/dusk/main.cpp
+index ab3184b..fecabd9 100644
+--- a/src/dusk/main.cpp
++++ b/src/dusk/main.cpp
+@@ -1,8 +1,10 @@
+ #if _WIN32
+ #define WINDOWS_LEAN_AND_MEAN
+ #include <Windows.h>
++#if !defined(_UWP)
+ #include <shellapi.h>
+ #endif
++#endif
+ 
+ #include <aurora/main.h>
+ #include "d/actor/d_a_movie_player.h"
+@@ -34,7 +36,7 @@ namespace {
+ 
+ bool RestartProcess(int argc, char* argv[]) {
+ #if defined(__ANDROID__) || (defined(TARGET_OS_IOS) && TARGET_OS_IOS) ||                           \
+-    (defined(TARGET_OS_TV) && TARGET_OS_TV)
++    (defined(TARGET_OS_TV) && TARGET_OS_TV) || defined(_UWP)
+     (void)argc;
+     (void)argv;
+     return false;
+@@ -113,6 +115,7 @@ bool RestartProcess(int argc, char* argv[]) {
+ }
+ 
+ #if _WIN32
++#if !defined(_UWP)
+ bool ShouldShowWindowsConsole(int argc, char* argv[]) {
+     if (const auto* env = std::getenv("DUSK_CONSOLE")) {
+         if (env[0] != '\0' && env[0] != '0') {
+@@ -158,9 +161,12 @@ void WindowsSetupConsole(bool showConsole) {
+         }
+     }
+ }
++#endif
+ 
+ int DuskMain(int argc, char* argv[]) {
++#if !defined(_UWP)
+     WindowsSetupConsole(ShouldShowWindowsConsole(argc, argv));
++#endif
+     const int result = game_main(argc, argv);
+     if constexpr (dusk::SupportsProcessRestart) {
+         if (dusk::RestartRequested) {
+@@ -170,6 +176,7 @@ int DuskMain(int argc, char* argv[]) {
+     return result;
+ }
+ 
++#if !defined(_UWP)
+ std::vector<std::string> WideArgsToUtf8(int argc, wchar_t** argv) {
+     std::vector<std::string> utf8Args;
+     utf8Args.reserve(argc);
+@@ -209,6 +216,7 @@ int RunWindowsGuiEntryPoint() {
+ 
+     return DuskMain(argc, argv.data());
+ }
++#endif
+ #else
+ int DuskMain(int argc, char* argv[]) {
+     const int result = game_main(argc, argv);
+@@ -221,11 +229,16 @@ int DuskMain(int argc, char* argv[]) {
+ 
+ }  // namespace
+ 
++#if defined(_UWP)
++#define SDL_MAIN_EXPORTED
++#include <SDL3/SDL_main.h>
++#endif
++
+ int main(int argc, char* argv[]) {
+     return DuskMain(argc, argv);
+ }
+ 
+-#if _WIN32
++#if _WIN32 && !defined(_UWP)
+ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+     return RunWindowsGuiEntryPoint();
+ }
+diff --git a/src/dusk/main.h b/src/dusk/main.h
+index e3db442..d7e848d 100644
+--- a/src/dusk/main.h
++++ b/src/dusk/main.h
+@@ -21,7 +21,7 @@ struct StageRequest {
+ extern StageRequest StageRequested;
+ 
+ #if defined(__ANDROID__) || (defined(TARGET_OS_IOS) && TARGET_OS_IOS) ||                           \
+-    (defined(TARGET_OS_TV) && TARGET_OS_TV)
++    (defined(TARGET_OS_TV) && TARGET_OS_TV) || defined(_UWP)
+ inline constexpr bool SupportsProcessRestart = false;
+ #else
+ inline constexpr bool SupportsProcessRestart = true;

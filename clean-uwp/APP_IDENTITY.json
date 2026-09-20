@@ -1,0 +1,11 @@
+{
+  "name": "Dusklight2UWP",
+  "publisher": "CN=Dusklight2UWP",
+  "displayName": "Dusklight 2 UWP",
+  "version": "2.0.0.0",
+  "architecture": "x64",
+  "target": "Windows.Universal / Xbox UWP",
+  "upstreamDusklight": "e9b120544cb75e81b5aa36777f1688fa61f2d9e8",
+  "packageLineage": "clean upstream Dusklight 2.0 plus UWP compatibility only",
+  "coexistsWithPrivateBuild": true
+}

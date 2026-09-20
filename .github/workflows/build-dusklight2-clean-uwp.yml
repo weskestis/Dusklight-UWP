@@ -1,0 +1,561 @@
+name: Build Clean Dusklight 2 UWP
+
+on:
+  push:
+    branches:
+      - codex/dusklight2-clean-uwp
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DUSKLIGHT_COMMIT: e9b120544cb75e81b5aa36777f1688fa61f2d9e8
+  AURORA_COMMIT: 7d4484a7abd6a10d77716977d20ff9da0cb67ce5
+  BOREALIS_COMMIT: 0bdba6c50a46409c4862474c72b4a3a631fbe0ec
+  RANDOMIZER_COMMIT: d870681a04190ad68f4e37c84b6a91f9e230aaa2
+  COSMETICS_COMMIT: fd93491089fa95441789244f2b2fd22a451ecbcc
+  UWP_DEP_COMMIT: 6ba4aad18b0f149151784f31fd339225544e24f2
+  DUSKLIGHT_UWP_PATCH_SHA256: 7fcd209f78b512d5f681f596032b59f2c590c12647c0903d6d568af09c883633
+  AURORA_UWP_PATCH_SHA256: 66b436d791b14b02dd3f8947ad7afe0176e3fc7280705ff5081fcb830e65fa28
+
+jobs:
+  xbox-uwp-x64:
+    name: Clean Xbox UWP x64 package
+    runs-on: windows-2022
+    timeout-minutes: 240
+
+    steps:
+      - name: Check out clean build controls
+        uses: actions/checkout@v4
+        with:
+          path: _control
+
+      - name: Enable MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Prepare short build paths
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
+          if (Test-Path 'S:\') { subst S: /D | Out-Null }
+          subst S: "$env:GITHUB_WORKSPACE"
+          New-Item -ItemType Directory -Force S:\tmp,S:\b | Out-Null
+          "DUSK_CONTROL=S:\_control" >> $env:GITHUB_ENV
+          "DUSK_SRC=S:\s" >> $env:GITHUB_ENV
+          "DUSK_UWP_DEP=S:\u" >> $env:GITHUB_ENV
+          "DUSK_FEED=S:\b\feed" >> $env:GITHUB_ENV
+          "DUSK_PKG=S:\b\package" >> $env:GITHUB_ENV
+          "DUSK_MOD_INSPECT=S:\b\mod-inspect" >> $env:GITHUB_ENV
+          "DUSK_MSIX_INSPECT=S:\b\msix-inspect" >> $env:GITHUB_ENV
+          "TMP=S:\tmp" >> $env:GITHUB_ENV
+          "TEMP=S:\tmp" >> $env:GITHUB_ENV
+          choco install ninja -y --no-progress
+          cmake --version
+          ninja --version
+          Get-Command cl | Select-Object -ExpandProperty Source
+
+      - name: Fetch exact upstream Dusklight 2.0 tree
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git init "$env:DUSK_SRC"
+          git -C "$env:DUSK_SRC" remote add origin https://github.com/TwilitRealm/dusklight.git
+          git -C "$env:DUSK_SRC" fetch --depth 1 origin $env:DUSKLIGHT_COMMIT
+          git -C "$env:DUSK_SRC" checkout --detach FETCH_HEAD
+          git -C "$env:DUSK_SRC" submodule update --init --recursive --depth 1
+
+          git init "$env:DUSK_UWP_DEP"
+          git -C "$env:DUSK_UWP_DEP" remote add origin https://github.com/SternXD/uwp-dep.git
+          git -C "$env:DUSK_UWP_DEP" fetch --depth 1 origin $env:UWP_DEP_COMMIT
+          git -C "$env:DUSK_UWP_DEP" checkout --detach FETCH_HEAD
+
+          $pins = @{
+            "$env:DUSK_SRC" = $env:DUSKLIGHT_COMMIT
+            "$env:DUSK_SRC\extern\aurora" = $env:AURORA_COMMIT
+            "$env:DUSK_SRC\extern\borealis" = $env:BOREALIS_COMMIT
+            "$env:DUSK_SRC\mods\randomizer" = $env:RANDOMIZER_COMMIT
+            "$env:DUSK_SRC\mods\cosmetics" = $env:COSMETICS_COMMIT
+            "$env:DUSK_UWP_DEP" = $env:UWP_DEP_COMMIT
+          }
+          foreach ($entry in $pins.GetEnumerator()) {
+            $actual = (git -C $entry.Key rev-parse HEAD).Trim()
+            if ($actual -ne $entry.Value) {
+              throw "Revision mismatch for $($entry.Key): expected $($entry.Value), got $actual"
+            }
+          }
+
+      - name: Apply UWP compatibility only
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $duskPatch = "$env:DUSK_CONTROL\clean-uwp\patches\dusklight2-clean-uwp.patch"
+          $auroraPatch = "$env:DUSK_CONTROL\clean-uwp\patches\aurora-uwp.patch"
+          $duskHash = (Get-FileHash $duskPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+          $auroraHash = (Get-FileHash $auroraPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($duskHash -ne $env:DUSKLIGHT_UWP_PATCH_SHA256) {
+            throw "Dusklight UWP patch hash mismatch: $duskHash"
+          }
+          if ($auroraHash -ne $env:AURORA_UWP_PATCH_SHA256) {
+            throw "Aurora UWP patch hash mismatch: $auroraHash"
+          }
+
+          git -C "$env:DUSK_SRC" apply --check $duskPatch
+          git -C "$env:DUSK_SRC" apply $duskPatch
+
+          $expectedRootChanges = @(
+            'CMakeLists.txt',
+            'cmake/WindowsExports.cmake',
+            'platforms/uwp/CMakeLists.txt',
+            'platforms/uwp/Package.appxmanifest',
+            'platforms/uwp/cmake/AssetDeploy.cmake',
+            'platforms/uwp/cmake/UwpSymbolManifest.props.in',
+            'platforms/uwp/main.cpp',
+            'src/dusk/main.cpp',
+            'src/dusk/main.h'
+          ) | Sort-Object
+          $actualRootChanges = @(
+            git -C "$env:DUSK_SRC" status --porcelain=v1 --untracked-files=all |
+              ForEach-Object { $_.Substring(3).Replace('\\','/') }
+          ) | Sort-Object
+          if (($actualRootChanges -join '|') -ne ($expectedRootChanges -join '|')) {
+            throw "Unexpected Dusklight source changes: $($actualRootChanges -join ', ')"
+          }
+
+          git -C "$env:DUSK_SRC\extern\aurora" apply --check $auroraPatch
+          git -C "$env:DUSK_SRC\extern\aurora" apply $auroraPatch
+          git -C "$env:DUSK_SRC" diff --check
+          git -C "$env:DUSK_SRC\extern\aurora" diff --check
+
+          foreach ($cleanSubmodule in @(
+            "$env:DUSK_SRC\mods\randomizer",
+            "$env:DUSK_SRC\mods\cosmetics",
+            "$env:DUSK_SRC\extern\borealis")) {
+            git -C $cleanSubmodule diff --quiet
+            if ($LASTEXITCODE -ne 0) { throw "Upstream submodule was modified: $cleanSubmodule" }
+          }
+
+          $privateMarkers = @(
+            'Enemy Souls',
+            'Boss Souls',
+            'NPC Souls',
+            'Octosanity',
+            'mStartingEnemySouls',
+            'fpcMtd_Create_EnemySouls',
+            'Fail-closed Enemy Soul gate blocked'
+          )
+          $privateHits = Get-ChildItem "$env:DUSK_SRC\mods\randomizer" -Recurse -File |
+            Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' } |
+            Select-String -SimpleMatch -Pattern $privateMarkers -List
+          if ($privateHits) {
+            throw "Private feature marker found in clean upstream Randomizer: $($privateHits.Path -join ', ')"
+          }
+
+      - name: Generate package artwork from upstream Dusklight assets
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sourceHashes = @{
+            'res\icon.png' = '9c4f8c6fc4e86a8be8d709ea6d6952239d925b33c7e8b229289507425a153f77'
+            'res\logo.png' = '4f68a903ec8bd88c5582a42d099a68150c4d3ee31a7a1b7a339311bda5ab4b5f'
+            'res\prelaunch-bg.png' = '3fbb05662e13c9dc86f46feef83e1064b2e16b3a248d57081df3000dcd1a1385'
+          }
+          foreach ($entry in $sourceHashes.GetEnumerator()) {
+            $path = Join-Path $env:DUSK_SRC $entry.Key
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $entry.Value) {
+              throw "Upstream artwork hash mismatch for $($entry.Key): $actual"
+            }
+          }
+
+          Add-Type -AssemblyName System.Drawing
+          $assetDir = "$env:DUSK_SRC\platforms\uwp\Assets"
+          New-Item -ItemType Directory -Force $assetDir | Out-Null
+          $iconPath = "$env:DUSK_SRC\res\icon.png"
+          $logoPath = "$env:DUSK_SRC\res\logo.png"
+          $backgroundPath = "$env:DUSK_SRC\res\prelaunch-bg.png"
+
+          function Save-IconAsset {
+            param([int]$Size, [string]$Path)
+            $source = [Drawing.Image]::FromFile($iconPath)
+            $bitmap = [Drawing.Bitmap]::new(
+              $Size, $Size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $graphics = [Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $graphics.Clear([Drawing.Color]::Transparent)
+              $graphics.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+              $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+              $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::HighQuality
+              $destination = [Drawing.Rectangle]::new(0, 0, $Size, $Size)
+              $graphics.DrawImage($source, $destination)
+              $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
+            }
+            finally {
+              $graphics.Dispose()
+              $bitmap.Dispose()
+              $source.Dispose()
+            }
+          }
+
+          function Save-BrandAsset {
+            param([int]$Width, [int]$Height, [string]$Path, [bool]$UseBackground)
+            $logo = [Drawing.Image]::FromFile($logoPath)
+            $background = $null
+            $bitmap = [Drawing.Bitmap]::new(
+              $Width, $Height, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $graphics = [Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $graphics.Clear([Drawing.Color]::FromArgb(255, 8, 10, 14))
+              $graphics.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+              $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+              $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::HighQuality
+              if ($UseBackground) {
+                $background = [Drawing.Image]::FromFile($backgroundPath)
+                $targetAspect = [double]$Width / [double]$Height
+                $sourceAspect = [double]$background.Width / [double]$background.Height
+                if ($sourceAspect -gt $targetAspect) {
+                  $cropHeight = [double]$background.Height
+                  $cropWidth = $cropHeight * $targetAspect
+                  $cropX = ([double]$background.Width - $cropWidth) / 2.0
+                  $cropY = 0.0
+                }
+                else {
+                  $cropWidth = [double]$background.Width
+                  $cropHeight = $cropWidth / $targetAspect
+                  $cropX = 0.0
+                  $cropY = ([double]$background.Height - $cropHeight) / 2.0
+                }
+                $destination = [Drawing.RectangleF]::new(0, 0, $Width, $Height)
+                $sourceRect = [Drawing.RectangleF]::new(
+                  [single]$cropX, [single]$cropY, [single]$cropWidth, [single]$cropHeight)
+                $graphics.DrawImage(
+                  $background, $destination, $sourceRect, [Drawing.GraphicsUnit]::Pixel)
+              }
+              $scale = [Math]::Min(
+                ([double]$Width * 0.86) / [double]$logo.Width,
+                ([double]$Height * 0.42) / [double]$logo.Height)
+              $logoWidth = [int][Math]::Round($logo.Width * $scale)
+              $logoHeight = [int][Math]::Round($logo.Height * $scale)
+              $logoX = [int](($Width - $logoWidth) / 2)
+              $logoY = [int](($Height - $logoHeight) / 2)
+              $logoDestination = [Drawing.Rectangle]::new(
+                $logoX, $logoY, $logoWidth, $logoHeight)
+              $graphics.DrawImage($logo, $logoDestination)
+              $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
+            }
+            finally {
+              if ($background) { $background.Dispose() }
+              $graphics.Dispose()
+              $bitmap.Dispose()
+              $logo.Dispose()
+            }
+          }
+
+          Save-IconAsset 48 "$assetDir\LockScreenLogo.scale-200.png"
+          Save-IconAsset 300 "$assetDir\Square150x150Logo.scale-200.png"
+          Save-IconAsset 620 "$assetDir\Square310x310Logo.scale-200.png"
+          Save-IconAsset 88 "$assetDir\Square44x44Logo.scale-200.png"
+          Save-IconAsset 24 "$assetDir\Square44x44Logo.targetsize-24_altform-unplated.png"
+          Save-IconAsset 50 "$assetDir\StoreLogo.png"
+          Save-BrandAsset 620 300 "$assetDir\Wide310x150Logo.scale-200.png" $false
+          Save-BrandAsset 1240 600 "$assetDir\SplashScreen.scale-200.png" $true
+
+          $expectedSizes = @{
+            'LockScreenLogo.scale-200.png' = @(48,48)
+            'SplashScreen.scale-200.png' = @(1240,600)
+            'Square150x150Logo.scale-200.png' = @(300,300)
+            'Square310x310Logo.scale-200.png' = @(620,620)
+            'Square44x44Logo.scale-200.png' = @(88,88)
+            'Square44x44Logo.targetsize-24_altform-unplated.png' = @(24,24)
+            'StoreLogo.png' = @(50,50)
+            'Wide310x150Logo.scale-200.png' = @(620,300)
+          }
+          foreach ($entry in $expectedSizes.GetEnumerator()) {
+            $image = [Drawing.Image]::FromFile((Join-Path $assetDir $entry.Key))
+            try {
+              if ($image.Width -ne $entry.Value[0] -or $image.Height -ne $entry.Value[1]) {
+                throw "Generated artwork has wrong size: $($entry.Key)"
+              }
+            }
+            finally { $image.Dispose() }
+          }
+
+      - name: Configure clean Dusklight 2 UWP feed
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S "$env:DUSK_SRC" -B "$env:DUSK_FEED" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON -DCMAKE_OBJECT_PATH_MAX=180 -DDUSK_UWP=ON -DDUSK_ENABLE_CODE_MODS=ON -DDUSK_ENABLE_OPUS=OFF -DBOREALIS_BUILD_TESTS=OFF -DBOREALIS_ENABLE_DISCORD=OFF -DBOREALIS_ENABLE_SENTRY=OFF -DBOREALIS_HTTP_BACKEND=none -DAURORA_ENABLE_TESTS=OFF -DAURORA_UWP_DEP_SOURCE_DIR="$env:DUSK_UWP_DEP" -DTRACY_ENABLE=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Dusklight 2 UWP feed configuration failed.' }
+
+      - name: Compile core and exact upstream bundled modules
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build "$env:DUSK_FEED" --target dusklight --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Dusklight 2 static UWP feed failed to build.' }
+          foreach ($file in @('dusklight.lib','dusklight_exports.def','dusklight_imports.lib')) {
+            if (-not (Test-Path "$env:DUSK_FEED\$file" -PathType Leaf)) {
+              throw "Required core feed output is missing: $file"
+            }
+          }
+          foreach ($target in @('luau_runtime_package','cosmetics_package','randomizer_package')) {
+            cmake --build "$env:DUSK_FEED" --target $target --parallel 2
+            if ($LASTEXITCODE -ne 0) { throw "Upstream module target failed: $target" }
+          }
+          foreach ($bundle in @('luau_runtime.dusk','cosmetics.dusk','randomizer.dusk')) {
+            if (-not (Test-Path "$env:DUSK_FEED\bundled_mods\$bundle" -PathType Leaf)) {
+              throw "Expected upstream bundled module is missing: $bundle"
+            }
+          }
+
+      - name: Run upstream Randomizer generator tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build "$env:DUSK_FEED" --target randomizer_generator_tests --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream Randomizer tests failed to compile.' }
+          $test = Get-ChildItem "$env:DUSK_FEED" -Recurse -File -Filter 'randomizer_generator_tests.exe' |
+            Select-Object -First 1
+          if (-not $test) { throw 'randomizer_generator_tests.exe is missing.' }
+          & $test.FullName
+          if ($LASTEXITCODE -ne 0) { throw "Upstream Randomizer tests failed: $LASTEXITCODE" }
+
+      - name: Inspect upstream bundled native modules
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force "$env:DUSK_MOD_INSPECT" | Out-Null
+          foreach ($name in @('luau_runtime','cosmetics','randomizer')) {
+            $inspect = Join-Path $env:DUSK_MOD_INSPECT $name
+            New-Item -ItemType Directory -Force $inspect | Out-Null
+            7z x "$env:DUSK_FEED\bundled_mods\$name.dusk" "-o$inspect" -y | Out-Null
+            if (-not (Test-Path "$inspect\mod.json" -PathType Leaf)) {
+              throw "$name.dusk has no mod.json."
+            }
+            $module = Get-ChildItem "$inspect\lib" -Recurse -File -Filter 'mod.dll' |
+              Select-Object -First 1
+            if (-not $module) { throw "$name.dusk has no Windows native mod.dll." }
+            $headers = & dumpbin /nologo /headers $module.FullName | Out-String
+            if ($headers -notmatch '(?i)machine [(]x64[)]') { throw "$name mod.dll is not x64." }
+            if ($name -in @('cosmetics','randomizer')) {
+              $imports = & dumpbin /nologo /imports $module.FullName | Out-String
+              if ($imports -notmatch '(?i)Dusklight2UWP[.]exe') {
+                throw "$name mod.dll is not linked to Dusklight2UWP.exe."
+              }
+            }
+            if ($name -eq 'randomizer') {
+              $moduleText = [Text.Encoding]::ASCII.GetString(
+                [IO.File]::ReadAllBytes($module.FullName))
+              foreach ($marker in @('Enemy Souls','Boss Souls','NPC Souls','Octosanity','Fail-closed Enemy Soul gate blocked')) {
+                if ($moduleText.Contains($marker)) {
+                  throw "Private feature leaked into clean Randomizer module: $marker"
+                }
+              }
+            }
+          }
+
+      - name: Configure final Windows Store package
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S "$env:DUSK_SRC\platforms\uwp" -B "$env:DUSK_PKG" -G "Visual Studio 17 2022" -A x64 -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 -DCMAKE_OBJECT_PATH_MAX=180 -DDUSK_DIR="$env:DUSK_FEED" -DDUSK_SOURCE_DIR="$env:DUSK_SRC" -DUWP_DEP_SOURCE_DIR="$env:DUSK_UWP_DEP"
+          if ($LASTEXITCODE -ne 0) { throw 'Final UWP package configuration failed.' }
+
+      - name: Create sideload signing certificate
+        id: cert
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $password = [Guid]::NewGuid().ToString('N')
+          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+          $certParams = @{
+            Type = 'Custom'
+            Subject = 'CN=Dusklight2UWP'
+            KeyAlgorithm = 'RSA'
+            KeyLength = 2048
+            HashAlgorithm = 'SHA256'
+            KeyExportPolicy = 'Exportable'
+            KeyUsage = 'DigitalSignature'
+            FriendlyName = 'Dusklight 2 UWP Sideload Signing'
+            CertStoreLocation = 'Cert:\CurrentUser\My'
+            TextExtension = @('2.5.29.37={text}1.3.6.1.5.5.7.3.3','2.5.29.19={text}')
+          }
+          $cert = New-SelfSignedCertificate @certParams
+          Export-PfxCertificate -Cert $cert -FilePath "$env:GITHUB_WORKSPACE\Dusklight2UWP-build-signing.pfx" -Password $securePassword | Out-Null
+          Export-Certificate -Cert $cert -FilePath "$env:GITHUB_WORKSPACE\Dusklight2UWP.cer" | Out-Null
+          Import-Certificate -FilePath "$env:GITHUB_WORKSPACE\Dusklight2UWP.cer" -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
+          "password=$password" >> $env:GITHUB_OUTPUT
+
+      - name: Build signed Xbox UWP package
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build "$env:DUSK_PKG" --config RelWithDebInfo --parallel 2 -- /p:AppxPackageSigningEnabled=true /p:PackageCertificateKeyFile="$env:GITHUB_WORKSPACE\Dusklight2UWP-build-signing.pfx" /p:PackageCertificatePassword="${{ steps.cert.outputs.password }}" '/p:PackageCertificateThumbprint=' /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly /p:GenerateAppxPackageOnBuild=true
+          if ($LASTEXITCODE -ne 0) { throw 'Signed Xbox/UWP package build failed.' }
+
+      - name: Verify and collect clean share package
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = "$env:GITHUB_WORKSPACE\Dusklight2UWP-Xbox-Package"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $sourcePackage = Get-ChildItem "$env:DUSK_PKG" -Recurse -File -Filter '*.msix' |
+            Where-Object { $_.FullName -notmatch '[\\/]Dependencies[\\/]' } |
+            Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $sourcePackage) { throw 'The UWP build produced no MSIX.' }
+          $package = Join-Path $out 'Dusklight2UWP_2.0.0.0_x64.msix'
+          Copy-Item $sourcePackage.FullName $package -Force
+
+          New-Item -ItemType Directory -Force "$env:DUSK_MSIX_INSPECT" | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [IO.Compression.ZipFile]::ExtractToDirectory($package, "$env:DUSK_MSIX_INSPECT")
+          $manifestPath = "$env:DUSK_MSIX_INSPECT\AppxManifest.xml"
+          if (-not (Test-Path $manifestPath)) { throw 'MSIX has no AppxManifest.xml.' }
+          $manifest = Get-Content $manifestPath -Raw
+          foreach ($identity in @('Name="Dusklight2UWP"','Publisher="CN=Dusklight2UWP"','Version="2.0.0.0"','DisplayName="Dusklight 2 UWP"','Name="codeGeneration"')) {
+            if (-not $manifest.Contains($identity)) { throw "MSIX manifest is missing: $identity" }
+          }
+
+          $exe = "$env:DUSK_MSIX_INSPECT\Dusklight2UWP.exe"
+          foreach ($required in @(
+            $exe,
+            "$env:DUSK_MSIX_INSPECT\mods\luau_runtime.dusk",
+            "$env:DUSK_MSIX_INSPECT\mods\cosmetics.dusk",
+            "$env:DUSK_MSIX_INSPECT\mods\randomizer.dusk",
+            "$env:DUSK_MSIX_INSPECT\SDL3.dll",
+            "$env:DUSK_MSIX_INSPECT\webgpu_dawn.dll",
+            "$env:DUSK_MSIX_INSPECT\libuwp.dll",
+            "$env:DUSK_MSIX_INSPECT\AppxSignature.p7x")) {
+            if (-not (Test-Path $required -PathType Leaf)) { throw "MSIX payload is missing: $required" }
+          }
+          if (Test-Path "$env:DUSK_MSIX_INSPECT\res\initial_pipeline_cache.db") {
+            throw 'A private legacy pipeline cache leaked into the clean package.'
+          }
+
+          $packagedMods = @(Get-ChildItem "$env:DUSK_MSIX_INSPECT\mods" -File -Filter '*.dusk' |
+            Select-Object -ExpandProperty Name | Sort-Object)
+          $expectedMods = @('cosmetics.dusk','luau_runtime.dusk','randomizer.dusk') | Sort-Object
+          if (($packagedMods -join '|') -ne ($expectedMods -join '|')) {
+            throw "Unexpected bundled modules: $($packagedMods -join ', ')"
+          }
+          foreach ($bundle in $expectedMods) {
+            $packagedHash = (Get-FileHash "$env:DUSK_MSIX_INSPECT\mods\$bundle" -Algorithm SHA256).Hash
+            $feedHash = (Get-FileHash "$env:DUSK_FEED\bundled_mods\$bundle" -Algorithm SHA256).Hash
+            if ($packagedHash -ne $feedHash) {
+              throw "Packaged $bundle differs from the verified upstream feed bundle."
+            }
+          }
+
+          $exeHeaders = & dumpbin /nologo /headers $exe | Out-String
+          if ($exeHeaders -notmatch '(?i)machine [(]x64[)]') { throw 'Packaged executable is not x64.' }
+          python "$env:DUSK_CONTROL\clean-uwp\scripts\verify_pe_symdb.py" $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged executable has no usable hook symbol manifest.' }
+          $exportsPath = Join-Path $env:RUNNER_TEMP 'dusklight2-uwp-exports.txt'
+          & dumpbin /nologo /exports $exe | Set-Content $exportsPath -Encoding ASCII
+          $exports = Get-Content $exportsPath -Raw
+          $exportRows = ([regex]::Matches($exports, '(?m)^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+')).Count
+          if ($exportRows -lt 1000) { throw "Curated game export surface is unexpectedly small: $exportRows" }
+
+          foreach ($name in @('luau_runtime','cosmetics','randomizer')) {
+            $inspect = Join-Path $env:RUNNER_TEMP "packaged-$name"
+            New-Item -ItemType Directory -Force $inspect | Out-Null
+            7z x "$env:DUSK_MSIX_INSPECT\mods\$name.dusk" "-o$inspect" -y | Out-Null
+            $module = Get-ChildItem "$inspect\lib" -Recurse -File -Filter 'mod.dll' |
+              Select-Object -First 1
+            if (-not $module) { throw "Packaged $name.dusk has no mod.dll." }
+            $headers = & dumpbin /nologo /headers $module.FullName | Out-String
+            if ($headers -notmatch '(?i)machine [(]x64[)]') { throw "Packaged $name mod.dll is not x64." }
+            if ($name -in @('cosmetics','randomizer')) {
+              $imports = & dumpbin /nologo /imports $module.FullName | Out-String
+              if ($imports -notmatch '(?i)Dusklight2UWP[.]exe') {
+                throw "Packaged $name module is not bound to Dusklight2UWP.exe."
+              }
+            }
+            if ($name -eq 'randomizer') {
+              $moduleText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($module.FullName))
+              foreach ($marker in @('Enemy Souls','Boss Souls','NPC Souls','Octosanity','Fail-closed Enemy Soul gate blocked')) {
+                if ($moduleText.Contains($marker)) {
+                  throw "Private feature leaked into packaged clean Randomizer: $marker"
+                }
+              }
+            }
+          }
+
+          if ((Get-Item $package).Length -gt 300MB) { throw 'MSIX exceeds the 300 MiB clean-package guard.' }
+
+          $signtoolOut = Join-Path $env:RUNNER_TEMP 'dusklight2-uwp-signtool.out'
+          $signtoolErr = Join-Path $env:RUNNER_TEMP 'dusklight2-uwp-signtool.err'
+          $signtoolExe = (Get-Command signtool).Source
+          $verify = Start-Process -FilePath $signtoolExe -ArgumentList @('verify','/pa','/v',$package) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $signtoolOut -RedirectStandardError $signtoolErr
+          $signatureOutput = ((Get-Content $signtoolOut -Raw) + [Environment]::NewLine + (Get-Content $signtoolErr -Raw)).Trim()
+          $signatureOutput | Out-Host
+          foreach ($signatureMarker in @('Signature Index: 0 (Primary Signature)','Hash of file (sha256):','Issued to: Dusklight2UWP','Issued by: Dusklight2UWP')) {
+            if (-not $signatureOutput.Contains($signatureMarker)) {
+              throw "MSIX signature report is missing: $signatureMarker"
+            }
+          }
+          if ($verify.ExitCode -ne 0) {
+            $errorCount = ([regex]::Matches($signatureOutput, 'SignTool Error:')).Count
+            $expectedSelfSignedTrust = $signatureOutput -match '(?s)SignTool Error: A certificate chain processed, but terminated in a root\s+certificate which is not trusted by the trust provider[.]'
+            if (-not $expectedSelfSignedTrust -or $errorCount -ne 1) {
+              throw "MSIX signature verification failed unexpectedly: $($verify.ExitCode)"
+            }
+            Write-Host 'MSIX signature is intact; its exported sideload certificate is intentionally self-signed.'
+          }
+
+          $dependencies = @(Get-ChildItem "$env:DUSK_PKG" -Recurse -File |
+            Where-Object {
+              $_.Extension -in '.appx','.msix' -and
+              $_.FullName -match '[\\/]Dependencies[\\/]' -and
+              $_.Name -match '(?i)x64'
+            })
+          if ($dependencies.Count -lt 1) { throw 'No x64 Microsoft VCLibs dependency was produced.' }
+          Copy-Item $dependencies[0].FullName $out -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\Dusklight2UWP.cer" $out -Force
+          Copy-Item "$env:DUSK_CONTROL\clean-uwp\INSTALL_XBOX.md" $out -Force
+          Copy-Item "$env:DUSK_CONTROL\clean-uwp\APP_IDENTITY.json" $out -Force
+          Copy-Item "$env:DUSK_CONTROL\clean-uwp\CLEAN-BASELINE.md" $out -Force
+          Copy-Item "$env:DUSK_SRC\LICENSE.md" "$out\DUSKLIGHT-LICENSE.md" -Force
+
+          $sourceManifest = [ordered]@{
+            package = 'Dusklight 2 UWP Xbox x64 2.0.0.0'
+            unofficialCommunityPort = $true
+            dusklight = $env:DUSKLIGHT_COMMIT
+            aurora = "$env:AURORA_COMMIT + UWP compatibility patch"
+            borealis = $env:BOREALIS_COMMIT
+            randomizer = $env:RANDOMIZER_COMMIT
+            cosmetics = $env:COSMETICS_COMMIT
+            uwpDependency = $env:UWP_DEP_COMMIT
+            upstreamBundledMods = @('luau_runtime','cosmetics','randomizer')
+            privateFeatureLayers = 'none'
+            workflowRun = $env:GITHUB_RUN_ID
+            sourceRevision = $env:GITHUB_SHA
+          }
+          $sourceManifest | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $out 'SOURCE-MANIFEST.json') -Encoding UTF8
+          Get-ChildItem $out -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Sort-Object | Set-Content (Join-Path $out 'SHA256SUMS.txt') -Encoding ASCII
+
+          $shareZip = "$env:GITHUB_WORKSPACE\Dusklight-2.0-UWP-Xbox-Share-Package.zip"
+          Compress-Archive -Path "$out\*" -DestinationPath $shareZip -CompressionLevel Optimal
+          $shareHash = (Get-FileHash $shareZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$shareHash  $(Split-Path $shareZip -Leaf)" | Set-Content "$shareZip.sha256" -Encoding ASCII
+          Remove-Item "$env:GITHUB_WORKSPACE\Dusklight2UWP-build-signing.pfx" -Force
+          Get-Content (Join-Path $out 'SHA256SUMS.txt') | Out-Host
+          Get-Content "$shareZip.sha256" | Out-Host
+
+      - name: Upload verified clean Xbox package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dusklight-2.0-UWP-Xbox-Clean
+          path: |
+            Dusklight-2.0-UWP-Xbox-Share-Package.zip
+            Dusklight-2.0-UWP-Xbox-Share-Package.zip.sha256
+            Dusklight2UWP-Xbox-Package/*
+          if-no-files-found: error
+          retention-days: 30
