@@ -30,7 +30,8 @@ The only source changes are the reviewed Xbox/UWP portability layer:
   and prelaunch background
 - Store-native, AppContainer-compatible builds of only the three modules
   upstream marks `BUNDLE`: Luau Runtime, Cosmetics, and Randomizer; their
-  signed directory bundles load in place from the package
+  signed directory bundles load in place from the package with
+  `LoadPackagedLibrary`
 
 The build does not apply any private `.634-.660` feature layer. A CI guard
 fails if known private-only markers such as Enemy Souls, Boss Souls, or

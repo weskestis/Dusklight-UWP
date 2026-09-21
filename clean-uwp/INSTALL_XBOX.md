@@ -9,7 +9,7 @@ LocalState, saves, configuration, mods, or textures.
 
 1. Put the Xbox in Developer Mode.
 2. Trust `Dusklight2UWP.cer` on the PC used for deployment.
-3. In Xbox Device Portal, deploy `Dusklight2UWP_2.0.1.0_x64.msix` together
+3. In Xbox Device Portal, deploy `Dusklight2UWP_2.0.1.1_x64.msix` together
    with the included x64 Microsoft VCLibs dependency.
 4. Launch Dusklight 2 UWP and select a supported Twilight Princess disc image
    dumped from a copy you own.

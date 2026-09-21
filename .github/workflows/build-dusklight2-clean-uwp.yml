@@ -17,7 +17,7 @@ env:
   COSMETICS_COMMIT: fd93491089fa95441789244f2b2fd22a451ecbcc
   UWP_DEP_COMMIT: 6ba4aad18b0f149151784f31fd339225544e24f2
   DUSKLIGHT_UWP_PATCH_SHA256: 7fcd209f78b512d5f681f596032b59f2c590c12647c0903d6d568af09c883633
-  DUSKLIGHT_UWP_RUNTIME_PATCH_SHA256: 1ebce34e337236adaca98a5831369b4dc78454b0fb764092471ef41c70d3d6db
+  DUSKLIGHT_UWP_RUNTIME_PATCH_SHA256: 86eb26a101b38dac19e03ccd0433e577583e90a2024d860912e4343e80be6e0e
   AURORA_UWP_PATCH_SHA256: 66b436d791b14b02dd3f8947ad7afe0176e3fc7280705ff5081fcb830e65fa28
 
 jobs:
@@ -129,7 +129,8 @@ jobs:
             'platforms/uwp/cmake/UwpSymbolManifest.props.in',
             'platforms/uwp/main.cpp',
             'src/dusk/main.cpp',
-            'src/dusk/main.h'
+            'src/dusk/main.h',
+            'src/dusk/mods/loader/native_module.cpp'
           ) | Sort-Object
           $actualRootChanges = @(
             git -C "$env:DUSK_SRC" status --porcelain=v1 --untracked-files=all |
@@ -479,7 +480,7 @@ jobs:
             Where-Object { $_.FullName -notmatch '[\\/]Dependencies[\\/]' } |
             Sort-Object Length -Descending | Select-Object -First 1
           if (-not $sourcePackage) { throw 'The UWP build produced no MSIX.' }
-          $package = Join-Path $out 'Dusklight2UWP_2.0.1.0_x64.msix'
+          $package = Join-Path $out 'Dusklight2UWP_2.0.1.1_x64.msix'
           Copy-Item $sourcePackage.FullName $package -Force
 
           New-Item -ItemType Directory -Force "$env:DUSK_MSIX_INSPECT" | Out-Null
@@ -488,7 +489,7 @@ jobs:
           $manifestPath = "$env:DUSK_MSIX_INSPECT\AppxManifest.xml"
           if (-not (Test-Path $manifestPath)) { throw 'MSIX has no AppxManifest.xml.' }
           $manifest = Get-Content $manifestPath -Raw
-          foreach ($identity in @('Name="Dusklight2UWP"','Publisher="CN=Dusklight2UWP"','Version="2.0.1.0"','DisplayName="Dusklight 2 UWP"','Name="codeGeneration"')) {
+          foreach ($identity in @('Name="Dusklight2UWP"','Publisher="CN=Dusklight2UWP"','Version="2.0.1.1"','DisplayName="Dusklight 2 UWP"','Name="codeGeneration"')) {
             if (-not $manifest.Contains($identity)) { throw "MSIX manifest is missing: $identity" }
           }
 
@@ -539,6 +540,26 @@ jobs:
           $exeImports = & dumpbin /nologo /imports $exe | Out-String
           if ($exeImports -match '(?im)^\s*PSAPI[.]dll\s*$') {
             throw 'Packaged executable still imports desktop-only PSAPI.dll.'
+          }
+          if ($exeImports -notmatch '(?i)LoadPackagedLibrary') {
+            throw 'Packaged executable does not import the Xbox-safe packaged-library loader.'
+          }
+          if ($exeImports -match '(?i)LoadLibraryExW') {
+            throw 'Packaged executable still imports the desktop-style native-module loader.'
+          }
+
+          $blockMapPath = "$env:DUSK_MSIX_INSPECT\AppxBlockMap.xml"
+          if (-not (Test-Path $blockMapPath -PathType Leaf)) {
+            throw 'MSIX has no AppxBlockMap.xml.'
+          }
+          $blockMap = Get-Content $blockMapPath -Raw
+          foreach ($modulePath in @(
+            'mods\luau_runtime\lib\windows-amd64\mod.dll',
+            'mods\cosmetics\lib\windows-amd64\mod.dll',
+            'mods\randomizer\lib\windows-amd64\mod.dll')) {
+            if (-not $blockMap.Contains("Name=`"$modulePath`"")) {
+              throw "Signed package block map is missing native module: $modulePath"
+            }
           }
           python "$env:DUSK_CONTROL\clean-uwp\scripts\verify_pe_symdb.py" $exe
           if ($LASTEXITCODE -ne 0) { throw 'Packaged executable has no usable hook symbol manifest.' }
@@ -613,7 +634,7 @@ jobs:
           Copy-Item "$env:DUSK_SRC\LICENSE.md" "$out\DUSKLIGHT-LICENSE.md" -Force
 
           $sourceManifest = [ordered]@{
-            package = 'Dusklight 2 UWP Xbox x64 2.0.1.0'
+            package = 'Dusklight 2 UWP Xbox x64 2.0.1.1'
             unofficialCommunityPort = $true
             dusklight = $env:DUSKLIGHT_COMMIT
             aurora = "$env:AURORA_COMMIT + UWP compatibility patch"
@@ -633,7 +654,7 @@ jobs:
             "$hash  $($_.Name)"
           } | Sort-Object | Set-Content (Join-Path $out 'SHA256SUMS.txt') -Encoding ASCII
 
-          $shareZip = "$env:GITHUB_WORKSPACE\Dusklight-2.0.1-UWP-Xbox-Share-Package.zip"
+          $shareZip = "$env:GITHUB_WORKSPACE\Dusklight-2.0.1.1-UWP-Xbox-Share-Package.zip"
           Compress-Archive -Path "$out\*" -DestinationPath $shareZip -CompressionLevel Optimal
           $shareHash = (Get-FileHash $shareZip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$shareHash  $(Split-Path $shareZip -Leaf)" | Set-Content "$shareZip.sha256" -Encoding ASCII
@@ -644,10 +665,10 @@ jobs:
       - name: Upload verified clean Xbox package
         uses: actions/upload-artifact@v4
         with:
-          name: Dusklight-2.0.1-UWP-Xbox-Clean
+          name: Dusklight-2.0.1.1-UWP-Xbox-Clean
           path: |
-            Dusklight-2.0.1-UWP-Xbox-Share-Package.zip
-            Dusklight-2.0.1-UWP-Xbox-Share-Package.zip.sha256
+            Dusklight-2.0.1.1-UWP-Xbox-Share-Package.zip
+            Dusklight-2.0.1.1-UWP-Xbox-Share-Package.zip.sha256
             Dusklight2UWP-Xbox-Package/*
           if-no-files-found: error
           retention-days: 30
