@@ -370,6 +370,8 @@ jobs:
               '-DCMAKE_SYSTEM_NAME=WindowsStore' `
               '-DCMAKE_SYSTEM_VERSION=10.0' `
               '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL' `
+              '-DCMAKE_C_FLAGS=/D_CRT_SECURE_NO_WARNINGS' `
+              '-DCMAKE_CXX_FLAGS=/D_CRT_SECURE_NO_WARNINGS' `
               "-DDUSK_GAME_EXE=$gameImportLib" `
               "-DDUSK_MODS_OUTPUT_DIR=$($mod.Build)\mods" `
               $mod.RootArg
