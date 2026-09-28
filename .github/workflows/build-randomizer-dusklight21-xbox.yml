@@ -948,7 +948,7 @@ jobs:
           $downloadDir = Join-Path $env:RUNNER_TEMP 'uwp-assets-download'
           $extractDir = Join-Path $env:RUNNER_TEMP 'uwp-assets-extract'
           New-Item -ItemType Directory -Force $downloadDir,$extractDir | Out-Null
-          gh release download tpr-cp20-source --repo "$env:GITHUB_REPOSITORY" `
+          gh release download tpr-cp20-source --repo "weskestis/Twilight-Princess-Randomizer-UWP" `
             --pattern $archiveName --dir $downloadDir
           $archive = Join-Path $downloadDir $archiveName
           $actualHash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
