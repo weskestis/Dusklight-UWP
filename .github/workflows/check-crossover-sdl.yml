@@ -23,7 +23,7 @@ jobs:
         shell: pwsh
         run: |
           cmake -S sdl -B build/sdl -G 'Visual Studio 17 2022' -A x64 `
-            -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 `
+            -DCMAKE_SYSTEM_NAME=WindowsStore '-DCMAKE_SYSTEM_VERSION=10.0' `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
             -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF
           if ($LASTEXITCODE) { throw 'SDL configuration failed' }
