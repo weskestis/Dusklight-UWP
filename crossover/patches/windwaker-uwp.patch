@@ -1,5 +1,5 @@
 diff --git a/native/CMakeLists.txt b/native/CMakeLists.txt
-index 3aeab31..29f27a5 100644
+index 3aeab31..091e68f 100644
 --- a/native/CMakeLists.txt
 +++ b/native/CMakeLists.txt
 @@ -44,8 +44,22 @@ if (APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
@@ -27,6 +27,17 @@ index 3aeab31..29f27a5 100644
  
  if (WIN32)
      file(GLOB _WIN_SDK_DIRS "C:/Program Files (x86)/Windows Kits/10/Include/10.*")
+@@ -126,6 +140,10 @@ include(cmake/deferred.cmake)
+ include(cmake/modules.cmake)
+ # Aurora, the GameCube SDK over WebGPU (phase 2); already included by GameConfig.cmake.
+ include(cmake/Aurora.cmake)
++if (COS_UWP AND TARGET freetype)
++    # Activate FreeType's existing CreateFile2 / MapViewOfFileFromApp path.
++    target_compile_definitions(freetype PRIVATE _WINRT_DLL=1)
++endif ()
+ # cos_dsp_hle, Dolphin's high-level DSP behind cos_sdk's DSP library (step 5.A, decision H6).
+ include(cmake/dsp_hle.cmake)
+ # cos_sdk, the game-specific SDK over Aurora, and its headless test cos_sdk_smoke.
 diff --git a/native/cmake/dsp_hle.cmake b/native/cmake/dsp_hle.cmake
 index 5fd573b..abb91fd 100644
 --- a/native/cmake/dsp_hle.cmake

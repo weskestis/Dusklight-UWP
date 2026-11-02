@@ -54,7 +54,7 @@ jobs:
       - name: Compile Wind Waker and Aurora
         shell: pwsh
         run: |
-          cmake --build S:\build\feed --target cos_uwp_game --parallel 4 2>&1 |
+          cmake --build S:\build\feed --target cos_uwp_game --parallel 4 -- -k 0 2>&1 |
             Tee-Object -FilePath S:\build\compile.log
           if ($LASTEXITCODE) { throw 'Wind Waker UWP compilation failed' }
       - name: Configure UWP app
