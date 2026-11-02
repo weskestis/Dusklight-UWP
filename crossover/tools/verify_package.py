@@ -67,6 +67,9 @@ def main():
             raise ValueError('Incorrect isolated package identity')
         if identity.get('Version') != '0.1.0.1':
             raise ValueError('Incorrect package version')
+        family = manifest.find('p:Dependencies/p:TargetDeviceFamily', NS)
+        if family is None or family.get('MinVersion') != '10.0.19041.0':
+            raise ValueError('The SDK raised the intended minimum Windows version')
         app = manifest.find('p:Applications/p:Application', NS)
         if app is None or app.get('EntryPoint') != 'uwp.App':
             raise ValueError('Incorrect UWP entry point')
