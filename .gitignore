@@ -1,0 +1,4 @@
+/build/
+/crossover/platforms/uwp/Assets/
+__pycache__/
+*.pyc

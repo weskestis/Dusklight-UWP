@@ -1,0 +1,20 @@
+Zelda Crossover UWP - Wind Waker foundation
+
+This package has its own identity (ZeldaCrossoverUWP) and its own saves.
+The current milestone is the Wind Waker UWP port. Twilight Princess, shared
+progression and crossover enemies are not connected in this milestone.
+
+1. Install ZeldaCrossover_0.1.0.1_x64.msix in Xbox Device Portal with the included
+   x64 Microsoft VCLibs APPX when requested. Set the app type to Game.
+2. Launch it once. The startup screen creates the folders and shows the game-data path.
+3. Put your uncompressed USA GameCube Wind Waker disc image (GZLE01 revision 0)
+   at LocalState/Games/WindWaker/GZLE01.iso in this app's files.
+4. Press A on the startup screen to check the file and start.
+
+Saves/settings: LocalState/WindWaker/user
+Graphics cache: LocalState/WindWaker/cache
+Startup/errors: LocalState/Logs/WindWaker/boot.log
+
+The Wii U HD version is not supported by this game core. No disc data is bundled.
+Host build checks do not establish Xbox gameplay stability; first-launch,
+audio, controller, new game, save/reload and room transitions need console testing.

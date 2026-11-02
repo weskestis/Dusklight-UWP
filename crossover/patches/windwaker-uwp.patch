@@ -1,0 +1,212 @@
+diff --git a/native/CMakeLists.txt b/native/CMakeLists.txt
+index 3aeab31..29f27a5 100644
+--- a/native/CMakeLists.txt
++++ b/native/CMakeLists.txt
+@@ -44,8 +44,22 @@ if (APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+ endif ()
+ 
+ project(cos_native LANGUAGES C CXX)
+-set(CMAKE_MSVC_MANIFEST_OPTION "")
+-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFEST:NO")
++option(COS_UWP "Build the Wind Waker core for the Xbox UWP wrapper" OFF)
++if (COS_UWP)
++    if (NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
++        message(FATAL_ERROR "COS_UWP requires a Windows x64 toolchain")
++    endif ()
++    if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
++        message(FATAL_ERROR "COS_UWP game sources require clang-cl")
++    endif ()
++    set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
++    add_compile_definitions(COS_UWP=1 _UWP=1 WINAPI_FAMILY=WINAPI_FAMILY_APP
++        _WIN32_WINNT=0x0A00 WINVER=0x0A00)
++endif ()
++if (WIN32 AND NOT COS_UWP)
++    set(CMAKE_MSVC_MANIFEST_OPTION "")
++    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFEST:NO")
++endif ()
+ 
+ if (WIN32)
+     file(GLOB _WIN_SDK_DIRS "C:/Program Files (x86)/Windows Kits/10/Include/10.*")
+diff --git a/native/cmake/executable.cmake b/native/cmake/executable.cmake
+index 4bee7c4..cde0c6c 100644
+--- a/native/cmake/executable.cmake
++++ b/native/cmake/executable.cmake
+@@ -170,6 +170,16 @@ foreach (_m IN LISTS COS_MODULES)
+     list(APPEND _exe_objects "$<TARGET_OBJECTS:${_m}>")
+ endforeach ()
+ 
++if (COS_UWP)
++    # Keep every game object and its static initialization in the archive. The
++    # Windows Store wrapper links this with /WHOLEARCHIVE and provides WinMain.
++    add_library(cos_uwp_game STATIC ${_exe_dol} ${_exe_rel} ${_exe_audio})
++    target_link_libraries(cos_uwp_game PRIVATE cos_pc cos_sdk)
++    set_target_properties(cos_uwp_game PROPERTIES LINKER_LANGUAGE CXX
++        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
++    return()
++endif ()
++
+ add_executable(switchwaker EXCLUDE_FROM_ALL "${_exe_dir}/cos_exe_stub.c")
+ add_dependencies(switchwaker ${COS_MODULES})
+ target_link_options(switchwaker PRIVATE "@${_exe_rsp}")
+diff --git a/native/include/unistd.h b/native/include/unistd.h
+index 70bc7b5..50a9571 100644
+--- a/native/include/unistd.h
++++ b/native/include/unistd.h
+@@ -86,7 +86,9 @@ static inline int open(const char* path, int oflag, ...) {
+         mode = va_arg(ap, int);
+         va_end(ap);
+     }
+-    return _open(path, oflag, mode);
++    // POSIX file descriptors are byte streams. The Windows CRT otherwise
++    // interprets 0x1A as EOF and translates CR/LF inside disc and save data.
++    return _open(path, oflag | _O_BINARY, mode);
+ }
+ 
+ #if defined(_WIN32)
+diff --git a/native/src/pc/runtime/pc_crash.cpp b/native/src/pc/runtime/pc_crash.cpp
+index 1d6b9c8..022aa94 100644
+--- a/native/src/pc/runtime/pc_crash.cpp
++++ b/native/src/pc/runtime/pc_crash.cpp
+@@ -34,8 +34,10 @@
+ #define NOMINMAX
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
++#if !defined(COS_UWP)
+ #include <dbghelp.h>
+ #pragma comment(lib, "dbghelp.lib")
++#endif
+ #else
+ #include <dlfcn.h>
+ #include <execinfo.h>
+@@ -51,6 +53,10 @@
+ #include <sys/uio.h>
+ #endif
+ 
++#if defined(COS_UWP)
++extern "C" IMAGE_DOS_HEADER __ImageBase;
++#endif
++
+ namespace pc {
+ 
+ namespace {
+@@ -188,6 +194,8 @@ void writeImageBase(int fd) {
+     // The frames below are printed as offsets into switchwaker.elf, the ELF next to the NRO.
+     writef(fd, "[cos] image base=0x%llx: aarch64-none-elf-addr2line -f -C -i -e switchwaker.elf <offset>\n",
+            (unsigned long long)cos_switch_image_base());
++#elif defined(COS_UWP)
++    writef(fd, "[cos] image base=0x%llx\n", (unsigned long long)(uintptr_t)&__ImageBase);
+ #elif defined(_WIN32)
+     writef(fd, "[cos] image base=0x%llx\n", (unsigned long long)(uintptr_t)GetModuleHandleA(nullptr));
+ #else
+@@ -407,6 +415,20 @@ void installCrashHandler() {
+     // libnx's exception handler (switch/native/source/cos_switch.cpp) reports crashes; it adds
+     // this state line.
+     cos_switch_set_crash_state_writer(writeState);
++#elif defined(COS_UWP)
++    // AppContainer has no desktop DbgHelp. Keep raw exception addresses and
++    // game state in boot.log; the matching PDB is retained by the build.
++    AddVectoredExceptionHandler(1, [](PEXCEPTION_POINTERS ep) -> LONG {
++        const DWORD code = ep->ExceptionRecord->ExceptionCode;
++        if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION ||
++            code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_STACK_OVERFLOW) {
++            writef(STDERR_FILENO, "[cos] exception 0x%08lx at %p\n",
++                   (unsigned long)code, ep->ExceptionRecord->ExceptionAddress);
++            writeState(STDERR_FILENO);
++            writeImageBase(STDERR_FILENO);
++        }
++        return EXCEPTION_CONTINUE_SEARCH;
++    });
+ #elif defined(_WIN32)
+     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+     SymInitialize(GetCurrentProcess(), NULL, TRUE);
+diff --git a/native/src/pc/runtime/pc_disc.cpp b/native/src/pc/runtime/pc_disc.cpp
+index 5f34a28..ec1bd59 100644
+--- a/native/src/pc/runtime/pc_disc.cpp
++++ b/native/src/pc/runtime/pc_disc.cpp
+@@ -13,7 +13,9 @@
+ #endif
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
++#if !defined(COS_UWP)
+ #include <commdlg.h>
++#endif
+ #include <string>
+ #endif
+ #include "pc_internal.h"
+@@ -34,7 +36,7 @@ namespace pc {
+ 
+ namespace {
+ char sDiscError[512];
+-#if defined(_WIN32)
++#if defined(_WIN32) && !defined(COS_UWP)
+ std::string sSelectedDiscPath;
+ 
+ bool promptUserForDisc(std::string& outPath) {
+@@ -121,6 +123,10 @@ void exitDisc() {
+              "imagen sin comprimir en sdmc:/switch/switchwaker/GZLE01.iso.",
+              sDiscError);
+     cos_switch_show_error(text);
++#elif defined(COS_UWP)
++    // The UWP wrapper performs the visible preflight before entering the game.
++    // A later disc error is preserved in LocalState/Logs/boot.log.
++    OutputDebugStringA(sDiscError);
+ #elif defined(_WIN32)
+     MessageBoxA(NULL, sDiscError, "SwitchWaker - Disc / ROM Error", MB_OK | MB_ICONERROR);
+ #endif
+@@ -131,7 +137,7 @@ void exitDisc() {
+ int checkDisc() {
+     const char* path = gConfig.disc;
+ 
+-#if defined(_WIN32)
++#if defined(_WIN32) && !defined(COS_UWP)
+     // 1. If not set, check for GZLE01.iso in current directory
+     if (path == nullptr || path[0] == '\0') {
+         if (access("GZLE01.iso", 0) == 0) {
+diff --git a/native/src/pc/runtime/pc_harness.cpp b/native/src/pc/runtime/pc_harness.cpp
+index 07fa6c7..e044a53 100644
+--- a/native/src/pc/runtime/pc_harness.cpp
++++ b/native/src/pc/runtime/pc_harness.cpp
+@@ -132,6 +132,10 @@ bool executablePath(char* out, size_t size) {
+     }
+     out[n] = '\0';
+     return true;
++#elif defined(COS_UWP)
++    // All writable paths are supplied by the wrapper. Never infer them from
++    // the executable's read-only installation directory.
++    return false;
+ #elif defined(_WIN32)
+     DWORD n = GetModuleFileNameA(NULL, out, (DWORD)size);
+     if (n == 0 || n >= size) {
+diff --git a/native/src/pc/runtime/pc_main.cpp b/native/src/pc/runtime/pc_main.cpp
+index 152499c..f9c0cc9 100644
+--- a/native/src/pc/runtime/pc_main.cpp
++++ b/native/src/pc/runtime/pc_main.cpp
+@@ -75,7 +75,15 @@ void makeDir(const char* path) {
+ // <directory of the executable>/user and <directory of the executable>/user/cache (or COS_CACHE_DIR);
+ // on the Switch <COS_SWITCH_ROOT>/user (the native port's directory on the SD card, switch/native/source).
+ void makeUserPaths(const char* argv0) {
+-#if defined(__SWITCH__)
++#if defined(COS_UWP)
++    (void)argv0;
++    const char* user = getenv("COS_USER_DIR");
++    if (user == nullptr || user[0] == '\0' || strlen(user) >= sizeof(sUserPath)) {
++        writef(STDERR_FILENO, "[cos] UWP writable user path is missing or too long\n");
++        pc_exit(PC_EXIT_USAGE);
++    }
++    snprintf(sUserPath, sizeof(sUserPath), "%s", user);
++#elif defined(__SWITCH__)
+     (void)argv0;
+     snprintf(sUserPath, sizeof(sUserPath), "%s/user", COS_SWITCH_ROOT);
+ #else
+@@ -223,7 +231,11 @@ void pc_aurora_init(int argc, char* argv[]) {
+     makeUserPaths(argc > 0 ? argv[0] : nullptr);
+ 
+     AuroraConfig config{};
++#if defined(COS_UWP)
++    config.appName = "Zelda Crossover - Wind Waker";
++#else
+     config.appName = "SwitchWaker";
++#endif
+     config.userPath = sUserPath;
+     config.cachePath = sCachePath;
+     config.desiredBackend = desiredBackend();
