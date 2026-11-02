@@ -39,6 +39,12 @@ jobs:
           if ($LASTEXITCODE) { throw 'Source preparation failed' }
           python S:\crossover\tools\package_assets.py
           if ($LASTEXITCODE) { throw 'Package artwork generation failed' }
+      - name: Check UWP launcher compilation
+        shell: pwsh
+        run: |
+          cl /nologo /std:c++20 /EHsc /DWINAPI_FAMILY=WINAPI_FAMILY_APP /D_WIN32_WINNT=0x0A00 `
+            /I S:\build\sources\uwp-dep\x64\include /Zs S:\crossover\platforms\uwp\main.cpp
+          if ($LASTEXITCODE) { throw 'UWP launcher compilation failed' }
       - name: Configure Wind Waker UWP core
         shell: pwsh
         run: |
@@ -73,7 +79,7 @@ jobs:
       - name: Verify, sign and collect
         shell: pwsh
         run: |
-          python S:\crossover\tools\verify_package.py --build S:\build\package --out S:\build\deliverables
+          python S:\crossover\tools\verify_package.py --build S:\build\package --out S:\build\deliverables --runtime S:\build\sources\uwp-dep\x64\bin
           if ($LASTEXITCODE) { throw 'Package compatibility checks failed' }
           $cert = New-SelfSignedCertificate -Type Custom -Subject 'CN=ZeldaCrossoverUWP' `
             -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyUsage DigitalSignature `
@@ -84,6 +90,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'Package signing failed' }
           Copy-Item S:\build\sources\source-provenance.json S:\build\deliverables\
           Copy-Item S:\crossover\INSTALL_XBOX.txt S:\build\deliverables\
+          python S:\crossover\tools\source_bundle.py --sources S:\build\sources --feed S:\build\feed --out S:\build\deliverables
+          if ($LASTEXITCODE) { throw 'Source and notice collection failed' }
           Get-ChildItem S:\build\deliverables -File | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
           } | Set-Content S:\build\deliverables\SHA256SUMS.txt

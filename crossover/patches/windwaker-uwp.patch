@@ -1,5 +1,5 @@
 diff --git a/native/CMakeLists.txt b/native/CMakeLists.txt
-index 3aeab31..091e68f 100644
+index 3aeab31..2f8da18 100644
 --- a/native/CMakeLists.txt
 +++ b/native/CMakeLists.txt
 @@ -44,8 +44,22 @@ if (APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
@@ -17,7 +17,7 @@ index 3aeab31..091e68f 100644
 +        message(FATAL_ERROR "COS_UWP game sources require clang-cl")
 +    endif ()
 +    set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
-+    add_compile_definitions(COS_UWP=1 _UWP=1 WINAPI_FAMILY=WINAPI_FAMILY_APP
++    add_compile_definitions(COS_UWP=1 _UWP=1 UNICODE _UNICODE WINAPI_FAMILY=WINAPI_FAMILY_APP
 +        _WIN32_WINNT=0x0A00 WINVER=0x0A00)
 +endif ()
 +if (WIN32 AND NOT COS_UWP)
@@ -39,7 +39,7 @@ index 3aeab31..091e68f 100644
  include(cmake/dsp_hle.cmake)
  # cos_sdk, the game-specific SDK over Aurora, and its headless test cos_sdk_smoke.
 diff --git a/native/cmake/dsp_hle.cmake b/native/cmake/dsp_hle.cmake
-index 5fd573b..abb91fd 100644
+index 5fd573b..c0850c5 100644
 --- a/native/cmake/dsp_hle.cmake
 +++ b/native/cmake/dsp_hle.cmake
 @@ -30,6 +30,7 @@ if (NOT COS_RECOMPCORE_DIR)
@@ -50,6 +50,19 @@ index 5fd573b..abb91fd 100644
  if (NOT EXISTS "${COS_RECOMPCORE_DIR}/Source/Core/Core/HW/DSPHLE/UCodes/UCodes.cpp")
      message(FATAL_ERROR "cos_native: COS_RECOMPCORE_DIR (${COS_RECOMPCORE_DIR}) is not a RecompCore "
              "checkout (needs Source/Core/Core/HW/DSPHLE)")
+@@ -64,7 +65,11 @@ target_compile_features(cos_dsp_hle PRIVATE cxx_std_23)
+ # Dolphin's code, not ours: its warnings are not acted on here.
+ if (MSVC)
+     target_compile_options(cos_dsp_hle PRIVATE /clang:-fno-strict-aliasing /W0)
+-    target_link_libraries(cos_dsp_hle PRIVATE fmt::fmt zlibstatic)
++    if (COS_UWP)
++        target_link_libraries(cos_dsp_hle PRIVATE fmt::fmt ZLIB::ZLIB)
++    else ()
++        target_link_libraries(cos_dsp_hle PRIVATE fmt::fmt zlibstatic)
++    endif ()
+ else ()
+     target_compile_options(cos_dsp_hle PRIVATE -fno-strict-aliasing -w)
+     target_link_libraries(cos_dsp_hle PRIVATE fmt::fmt z)
 diff --git a/native/cmake/executable.cmake b/native/cmake/executable.cmake
 index 4bee7c4..cde0c6c 100644
 --- a/native/cmake/executable.cmake
@@ -71,11 +84,59 @@ index 4bee7c4..cde0c6c 100644
  add_executable(switchwaker EXCLUDE_FROM_ALL "${_exe_dir}/cos_exe_stub.c")
  add_dependencies(switchwaker ${COS_MODULES})
  target_link_options(switchwaker PRIVATE "@${_exe_rsp}")
+diff --git a/native/dsp_hle/dsp_common_shim.cpp b/native/dsp_hle/dsp_common_shim.cpp
+index 535a245..ed64b07 100644
+--- a/native/dsp_hle/dsp_common_shim.cpp
++++ b/native/dsp_hle/dsp_common_shim.cpp
+@@ -81,7 +81,11 @@ void ToLower(std::string* str)
+ #ifdef _WIN32
+ void* AllocateMemoryPages(size_t size)
+ {
++#if defined(COS_UWP)
++  return VirtualAllocFromApp(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
++#else
+   return VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
++#endif
+ }
+ 
+ bool FreeMemoryPages(void* ptr, size_t)
+@@ -92,13 +96,21 @@ bool FreeMemoryPages(void* ptr, size_t)
+ bool WriteProtectMemory(void* ptr, size_t size, bool)
+ {
+   DWORD old_protect;
++#if defined(COS_UWP)
++  return VirtualProtectFromApp(ptr, size, PAGE_READONLY, &old_protect) != 0;
++#else
+   return VirtualProtect(ptr, size, PAGE_READONLY, &old_protect) != 0;
++#endif
+ }
+ 
+ bool UnWriteProtectMemory(void* ptr, size_t size, bool)
+ {
+   DWORD old_protect;
++#if defined(COS_UWP)
++  return VirtualProtectFromApp(ptr, size, PAGE_READWRITE, &old_protect) != 0;
++#else
+   return VirtualProtect(ptr, size, PAGE_READWRITE, &old_protect) != 0;
++#endif
+ }
+ #else
+ void* AllocateMemoryPages(size_t size)
 diff --git a/native/include/unistd.h b/native/include/unistd.h
-index 70bc7b5..50a9571 100644
+index 70bc7b5..e722a2d 100644
 --- a/native/include/unistd.h
 +++ b/native/include/unistd.h
-@@ -86,7 +86,9 @@ static inline int open(const char* path, int oflag, ...) {
+@@ -26,6 +26,9 @@ extern "C" {
+ 
+ // Sleep from kernel32 without pulling in windows.h
+ void __stdcall Sleep(unsigned long dwMilliseconds);
++#if defined(COS_UWP)
++__declspec(dllimport) unsigned long __stdcall GetCurrentProcessId(void);
++#endif
+ 
+ #ifndef S_ISDIR
+ #define S_ISDIR(mode) (((mode) & _S_IFMT) == _S_IFDIR)
+@@ -86,7 +89,9 @@ static inline int open(const char* path, int oflag, ...) {
          mode = va_arg(ap, int);
          va_end(ap);
      }
@@ -86,11 +147,32 @@ index 70bc7b5..50a9571 100644
  }
  
  #if defined(_WIN32)
+@@ -129,7 +134,11 @@ static inline int fileno(FILE* stream) {
+ }
+ 
+ static inline int getpid(void) {
++#if defined(COS_UWP)
++    return (int)GetCurrentProcessId();
++#else
+     return _getpid();
++#endif
+ }
+ 
+ static inline int close(int fd) {
 diff --git a/native/src/pc/runtime/pc_crash.cpp b/native/src/pc/runtime/pc_crash.cpp
-index 1d6b9c8..022aa94 100644
+index 1d6b9c8..d25b8b0 100644
 --- a/native/src/pc/runtime/pc_crash.cpp
 +++ b/native/src/pc/runtime/pc_crash.cpp
-@@ -34,8 +34,10 @@
+@@ -25,6 +25,8 @@
+ #include <cstdarg>
+ #include <cstdio>
+ #include <cstring>
++#include <exception>
++#include <cstdlib>
+ #include <fcntl.h>
+ #include <pthread.h>
+ #include <unistd.h>
+@@ -34,8 +36,10 @@
  #define NOMINMAX
  #define WIN32_LEAN_AND_MEAN
  #include <windows.h>
@@ -101,7 +183,7 @@ index 1d6b9c8..022aa94 100644
  #else
  #include <dlfcn.h>
  #include <execinfo.h>
-@@ -51,6 +53,10 @@
+@@ -51,6 +55,10 @@
  #include <sys/uio.h>
  #endif
  
@@ -112,7 +194,7 @@ index 1d6b9c8..022aa94 100644
  namespace pc {
  
  namespace {
-@@ -188,6 +194,8 @@ void writeImageBase(int fd) {
+@@ -188,6 +196,8 @@ void writeImageBase(int fd) {
      // The frames below are printed as offsets into switchwaker.elf, the ELF next to the NRO.
      writef(fd, "[cos] image base=0x%llx: aarch64-none-elf-addr2line -f -C -i -e switchwaker.elf <offset>\n",
             (unsigned long long)cos_switch_image_base());
@@ -121,23 +203,18 @@ index 1d6b9c8..022aa94 100644
  #elif defined(_WIN32)
      writef(fd, "[cos] image base=0x%llx\n", (unsigned long long)(uintptr_t)GetModuleHandleA(nullptr));
  #else
-@@ -407,6 +415,20 @@ void installCrashHandler() {
+@@ -407,6 +417,15 @@ void installCrashHandler() {
      // libnx's exception handler (switch/native/source/cos_switch.cpp) reports crashes; it adds
      // this state line.
      cos_switch_set_crash_state_writer(writeState);
 +#elif defined(COS_UWP)
-+    // AppContainer has no desktop DbgHelp. Keep raw exception addresses and
-+    // game state in boot.log; the matching PDB is retained by the build.
-+    AddVectoredExceptionHandler(1, [](PEXCEPTION_POINTERS ep) -> LONG {
-+        const DWORD code = ep->ExceptionRecord->ExceptionCode;
-+        if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION ||
-+            code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_STACK_OVERFLOW) {
-+            writef(STDERR_FILENO, "[cos] exception 0x%08lx at %p\n",
-+                   (unsigned long)code, ep->ExceptionRecord->ExceptionAddress);
-+            writeState(STDERR_FILENO);
-+            writeImageBase(STDERR_FILENO);
-+        }
-+        return EXCEPTION_CONTINUE_SEARCH;
++    // UWP excludes vectored exception registration and desktop DbgHelp.
++    // Record C++ termination and game panics; hardware faults use platform dumps.
++    std::set_terminate([] {
++        writef(STDERR_FILENO, "[cos] unhandled C++ termination\n");
++        writeState(STDERR_FILENO);
++        writeImageBase(STDERR_FILENO);
++        std::_Exit(PC_EXIT_USAGE);
 +    });
  #elif defined(_WIN32)
      SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);

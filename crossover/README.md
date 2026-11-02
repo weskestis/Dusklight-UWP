@@ -16,8 +16,11 @@ The Windows workflow builds the game and SDK with clang-cl, then links them into
 a Windows Store wrapper using the UWP SDL/Dawn/nod binaries. The wrapper creates
 LocalState paths, checks the supplied disc and offers a controller-operated start
 screen. Package checks reject the wrong application identity, non-x64 binaries,
-missing AppContainer flags and known desktop-only DLL imports. Those checks do
-not replace an Xbox runtime test.
+missing application AppContainer flags and desktop imports in our executable.
+The inherited runtime DLLs must match the pinned depot byte for byte. Several
+of those DLLs lack AppContainer flags or import desktop APIs/CRT libraries;
+`package-validation.json` records each issue. This is an experimental Dev Mode
+package, not Store certification or proof that those DLLs work on Xbox.
 
 The original clean Dusklight build remains on `main`; this project lives on
 `codex/tp-ww-crossover-uwp`. Its package identity is `ZeldaCrossoverUWP`.
