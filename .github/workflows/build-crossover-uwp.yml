@@ -79,7 +79,7 @@ jobs:
         shell: pwsh
         run: |
           cmake -S S:/crossover/platforms/uwp -B S:/build/package -G 'Visual Studio 17 2022' -A x64 `
-            -DWW_FEED=S:/build/feed -DUWP_DEPS=S:/build/runtime -DPACKAGE_VERSION=0.1.0.1
+            -DWW_FEED=S:/build/feed -DUWP_DEPS=S:/build/runtime '-DPACKAGE_VERSION=0.1.0.1'
           if ($LASTEXITCODE) { throw 'UWP app configuration failed' }
       - name: Compile and package UWP app
         shell: pwsh
@@ -121,6 +121,8 @@ jobs:
           path: |
             build/compile.log
             build/package/**/ZeldaCrossoverUWP.pdb
+            build/package/**/ZeldaCrossoverUWP.exe
+            build/package/**/AppxManifest.xml
             build/deliverables/package-validation.json
             build/feed/CMakeCache.txt
             build/feed/CMakeFiles/CMakeConfigureLog.yaml

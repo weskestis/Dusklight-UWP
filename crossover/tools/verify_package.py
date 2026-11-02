@@ -65,6 +65,8 @@ def main():
         identity = manifest.find('p:Identity', NS)
         if identity is None or identity.get('Name') != 'ZeldaCrossoverUWP' or identity.get('Publisher') != 'CN=ZeldaCrossoverUWP':
             raise ValueError('Incorrect isolated package identity')
+        if identity.get('Version') != '0.1.0.1':
+            raise ValueError('Incorrect package version')
         app = manifest.find('p:Applications/p:Application', NS)
         if app is None or app.get('EntryPoint') != 'uwp.App':
             raise ValueError('Incorrect UWP entry point')
