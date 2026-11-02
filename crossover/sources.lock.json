@@ -1,8 +1,27 @@
 {
   "schema_version": 1,
-  "windwaker": {"url": "https://github.com/MaskeZenY/WindowWaker.git", "commit": "105e244bce18547532cbe9728dfd440b517416d4"},
-  "aurora": {"url": "https://github.com/encounter/aurora.git", "commit": "3227d76c60e1e782ca576610bce61c9e7744d8be"},
-  "decomp": {"url": "https://github.com/snrubrm/tww.git", "commit": "b09eebc39852e18397031d9a563a8eae124f21f1"},
-  "recompcore": {"url": "https://github.com/elliotttate/RecompCore.git", "commit": "8ab24daee9c641634fda5cac30389ad4b2cfda5e"},
-  "uwp-dep": {"url": "https://github.com/XboxEmulationHub/uwp-dep.git", "commit": "6ba4aad18b0f149151784f31fd339225544e24f2"}
+  "windwaker": {
+    "url": "https://github.com/MaskeZenY/WindowWaker.git",
+    "commit": "105e244bce18547532cbe9728dfd440b517416d4"
+  },
+  "aurora": {
+    "url": "https://github.com/encounter/aurora.git",
+    "commit": "3227d76c60e1e782ca576610bce61c9e7744d8be"
+  },
+  "decomp": {
+    "url": "https://github.com/snrubrm/tww.git",
+    "commit": "b09eebc39852e18397031d9a563a8eae124f21f1"
+  },
+  "recompcore": {
+    "url": "https://github.com/elliotttate/RecompCore.git",
+    "commit": "8ab24daee9c641634fda5cac30389ad4b2cfda5e"
+  },
+  "uwp-dep": {
+    "url": "https://github.com/XboxEmulationHub/uwp-dep.git",
+    "commit": "6ba4aad18b0f149151784f31fd339225544e24f2"
+  },
+  "sdl": {
+    "url": "https://github.com/XboxEmulationHub/SDL3-uwp.git",
+    "commit": "b978adcfea9daa6612ec60f1c77d93c0728ad821"
+  }
 }

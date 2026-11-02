@@ -10,8 +10,10 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <stdexcept>
 
 extern "C" int aurora_main(int argc, char** argv);
+extern "C" __declspec(dllimport) void* uwp_GetWindowReference();
 namespace fs = std::filesystem;
 
 namespace {
@@ -104,6 +106,8 @@ int bootstrap(int argc, char** argv) {
         _wfreopen_s(&stream, (logs / L"stdout.log").c_str(), L"wb", stdout);
         setvbuf(stdout, nullptr, _IONBF, 0);
         std::fprintf(stderr, "Zelda Crossover UWP: Wind Waker startup\n");
+        // Cache the UI thread CoreWindow before Aurora starts its render worker.
+        if (!uwp_GetWindowReference()) throw std::runtime_error("No UWP CoreWindow");
         envPath("COS_USER_DIR", user);
         envPath("COS_CACHE_DIR", cache);
         envPath("COS_SETTINGS", user / L"settings.ini");
@@ -114,9 +118,11 @@ int bootstrap(int argc, char** argv) {
         if (!prelaunch(games / L"GZLE01.iso")) return 0;
         return aurora_main(argc, argv);
     } catch (const winrt::hresult_error& error) {
+        std::fprintf(stderr, "UWP startup: %s\n", winrt::to_string(error.message()).c_str());
         OutputDebugStringW(error.message().c_str());
         return 2;
     } catch (const std::exception& error) {
+        std::fprintf(stderr, "UWP startup: %s\n", error.what());
         OutputDebugStringA(error.what());
         return 2;
     }

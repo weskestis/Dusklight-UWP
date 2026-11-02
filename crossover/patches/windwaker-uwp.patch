@@ -39,7 +39,7 @@ index 3aeab31..2f8da18 100644
  include(cmake/dsp_hle.cmake)
  # cos_sdk, the game-specific SDK over Aurora, and its headless test cos_sdk_smoke.
 diff --git a/native/cmake/dsp_hle.cmake b/native/cmake/dsp_hle.cmake
-index 5fd573b..c0850c5 100644
+index 5fd573b..827359b 100644
 --- a/native/cmake/dsp_hle.cmake
 +++ b/native/cmake/dsp_hle.cmake
 @@ -30,6 +30,7 @@ if (NOT COS_RECOMPCORE_DIR)
@@ -56,7 +56,7 @@ index 5fd573b..c0850c5 100644
      target_compile_options(cos_dsp_hle PRIVATE /clang:-fno-strict-aliasing /W0)
 -    target_link_libraries(cos_dsp_hle PRIVATE fmt::fmt zlibstatic)
 +    if (COS_UWP)
-+        target_link_libraries(cos_dsp_hle PRIVATE fmt::fmt ZLIB::ZLIB)
++        target_link_libraries(cos_dsp_hle PRIVATE fmt::fmt)
 +    else ()
 +        target_link_libraries(cos_dsp_hle PRIVATE fmt::fmt zlibstatic)
 +    endif ()
@@ -85,10 +85,51 @@ index 4bee7c4..cde0c6c 100644
  add_dependencies(switchwaker ${COS_MODULES})
  target_link_options(switchwaker PRIVATE "@${_exe_rsp}")
 diff --git a/native/dsp_hle/dsp_common_shim.cpp b/native/dsp_hle/dsp_common_shim.cpp
-index 535a245..ed64b07 100644
+index 535a245..59e79bf 100644
 --- a/native/dsp_hle/dsp_common_shim.cpp
 +++ b/native/dsp_hle/dsp_common_shim.cpp
-@@ -81,7 +81,11 @@ void ToLower(std::string* str)
+@@ -22,7 +22,9 @@
+ #include <sys/mman.h>
+ #include <unistd.h>
+ #endif
++#if !defined(COS_UWP)
+ #include <zlib.h>
++#endif
+ 
+ #include "Common/CommonTypes.h"
+ #include "cos_dsp_hle.h"
+@@ -69,7 +71,30 @@ void GenericLogFmtImpl(LogLevel level, LogType, const char* file, int line,
+ 
+ u32 HashAdler32(const u8* data, size_t len)
+ {
++#if defined(COS_UWP)
++  // The disc-reader archive already embeds zlib. Avoid pulling a second
++  // adler32_z definition from the shared zlib import library into the app.
++  // 5552-byte blocks keep both running sums within 32 bits before reduction.
++  if (data == nullptr)
++    return 1;
++  u32 low = 1;
++  u32 high = 0;
++  while (len != 0)
++  {
++    const size_t block = std::min(len, size_t{5552});
++    len -= block;
++    for (size_t i = 0; i < block; ++i)
++    {
++      low += *data++;
++      high += low;
++    }
++    low %= 65521;
++    high %= 65521;
++  }
++  return (high << 16) | low;
++#else
+   return static_cast<u32>(adler32_z(1, data, len));
++#endif
+ }
+ 
+ void ToLower(std::string* str)
+@@ -81,7 +106,11 @@ void ToLower(std::string* str)
  #ifdef _WIN32
  void* AllocateMemoryPages(size_t size)
  {
@@ -100,7 +141,7 @@ index 535a245..ed64b07 100644
  }
  
  bool FreeMemoryPages(void* ptr, size_t)
-@@ -92,13 +96,21 @@ bool FreeMemoryPages(void* ptr, size_t)
+@@ -92,13 +121,21 @@ bool FreeMemoryPages(void* ptr, size_t)
  bool WriteProtectMemory(void* ptr, size_t size, bool)
  {
    DWORD old_protect;

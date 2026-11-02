@@ -81,7 +81,7 @@ def main():
                     original = args.runtime / path.name
                     if not original.is_file() or hashlib.sha256(original.read_bytes()).hexdigest() != digest:
                         raise ValueError(f'Runtime differs from the pinned depot: {path.name}')
-                result = check_pe(path, strict=not inherited)
+                result = check_pe(path, strict=(not inherited or path.name == 'SDL3.dll'))
                 result.update(sha256=digest, pinned_runtime=inherited)
                 report['binaries'][path.relative_to(root).as_posix()] = result
                 report['runtime_warnings'].extend(f'{path.name}: {w}' for w in result['warnings'])

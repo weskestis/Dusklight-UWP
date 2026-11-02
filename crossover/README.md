@@ -8,7 +8,7 @@ It does not yet link Twilight Princess or implement crossover combat.
 ## Source and build
 
 `sources.lock.json` pins WindowWaker, Aurora, the decompilation metadata,
-Dolphin DSP source and the Xbox UWP runtime depot. `tools/prepare.py` verifies
+Dolphin DSP source, SDL's UWP source fork and the Xbox UWP runtime depot. `tools/prepare.py` verifies
 those revisions, applies the UWP patches, and generates empty asset declarations.
 Real game data is read from the user's GZLE01 revision 0 disc at runtime.
 
@@ -17,8 +17,10 @@ a Windows Store wrapper using the UWP SDL/Dawn/nod binaries. The wrapper creates
 LocalState paths, checks the supplied disc and offers a controller-operated start
 screen. Package checks reject the wrong application identity, non-x64 binaries,
 missing application AppContainer flags and desktop imports in our executable.
-The inherited runtime DLLs must match the pinned depot byte for byte. Several
-of those DLLs lack AppContainer flags or import desktop APIs/CRT libraries;
+SDL is built from source for Windows Store and must pass the same import checks
+as our executable. Other inherited runtime DLLs must match the pinned depot byte
+for byte. Several
+of those DLLs lack AppContainer flags or import desktop APIs;
 `package-validation.json` records each issue. This is an experimental Dev Mode
 package, not Store certification or proof that those DLLs work on Xbox.
 

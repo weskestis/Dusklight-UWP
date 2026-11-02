@@ -38,7 +38,7 @@ def main():
                         continue
                     notices.extend([f'\n--- {prefix}/{relative.as_posix()} ---\n', content, '\n'])
 
-        for name in ('windwaker', 'aurora', 'decomp', 'recompcore'):
+        for name in ('windwaker', 'aurora', 'decomp', 'recompcore', 'sdl'):
             root = args.sources / name
             add_tree(root, f'upstream/{name}', tracked(root))
         for root in sorted((args.feed / '_deps').glob('*-src')):
