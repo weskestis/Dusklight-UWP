@@ -27,6 +27,18 @@ index 3aeab31..29f27a5 100644
  
  if (WIN32)
      file(GLOB _WIN_SDK_DIRS "C:/Program Files (x86)/Windows Kits/10/Include/10.*")
+diff --git a/native/cmake/dsp_hle.cmake b/native/cmake/dsp_hle.cmake
+index 5fd573b..abb91fd 100644
+--- a/native/cmake/dsp_hle.cmake
++++ b/native/cmake/dsp_hle.cmake
+@@ -30,6 +30,7 @@ if (NOT COS_RECOMPCORE_DIR)
+     set(COS_RECOMPCORE_DIR "${_cos_recompcore}" CACHE PATH
+             "RecompCore source checkout (Dolphin's DSPHLE for the DSP, decision H6)")
+ endif ()
++file(TO_CMAKE_PATH "${COS_RECOMPCORE_DIR}" COS_RECOMPCORE_DIR)
+ if (NOT EXISTS "${COS_RECOMPCORE_DIR}/Source/Core/Core/HW/DSPHLE/UCodes/UCodes.cpp")
+     message(FATAL_ERROR "cos_native: COS_RECOMPCORE_DIR (${COS_RECOMPCORE_DIR}) is not a RecompCore "
+             "checkout (needs Source/Core/Core/HW/DSPHLE)")
 diff --git a/native/cmake/executable.cmake b/native/cmake/executable.cmake
 index 4bee7c4..cde0c6c 100644
 --- a/native/cmake/executable.cmake

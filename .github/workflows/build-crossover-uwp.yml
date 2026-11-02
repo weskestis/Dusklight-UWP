@@ -42,13 +42,13 @@ jobs:
       - name: Configure Wind Waker UWP core
         shell: pwsh
         run: |
-          cmake -S S:\build\sources\windwaker\native -B S:\build\feed -G Ninja `
+          cmake -S S:/build/sources/windwaker/native -B S:/build/feed -G Ninja `
             -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL -DCMAKE_OBJECT_PATH_MAX=180 `
             -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON -DCOS_UWP=ON -DCOS_RUNTIME_ASSETS=ON `
-            -DCOS_ASSETS_DIR=S:\build\sources\assets\GZLE01 -DCOS_RECOMPCORE_DIR=S:\build\sources\recompcore `
-            -DFETCHCONTENT_SOURCE_DIR_AURORA=S:\build\sources\aurora -DCOS_AURORA_PREPATCHED=ON `
-            -DAURORA_UWP_DEP_SOURCE_DIR=S:\build\sources\uwp-dep -DAURORA_ENABLE_TESTS=OFF `
+            -DCOS_ASSETS_DIR=S:/build/sources/assets/GZLE01 -DCOS_RECOMPCORE_DIR=S:/build/sources/recompcore `
+            -DFETCHCONTENT_SOURCE_DIR_AURORA=S:/build/sources/aurora -DCOS_AURORA_PREPATCHED=ON `
+            -DAURORA_UWP_DEP_SOURCE_DIR=S:/build/sources/uwp-dep -DAURORA_ENABLE_TESTS=OFF `
             -DAURORA_BUILD_TESTS=OFF -DAURORA_ENABLE_EXAMPLES=OFF -DTRACY_ENABLE=OFF
           if ($LASTEXITCODE) { throw 'Wind Waker UWP configuration failed' }
       - name: Compile Wind Waker and Aurora
@@ -60,8 +60,8 @@ jobs:
       - name: Configure UWP app
         shell: pwsh
         run: |
-          cmake -S S:\crossover\platforms\uwp -B S:\build\package -G 'Visual Studio 17 2022' -A x64 `
-            -DWW_FEED=S:\build\feed -DUWP_DEPS=S:\build\sources\uwp-dep -DPACKAGE_VERSION=0.1.0.1
+          cmake -S S:/crossover/platforms/uwp -B S:/build/package -G 'Visual Studio 17 2022' -A x64 `
+            -DWW_FEED=S:/build/feed -DUWP_DEPS=S:/build/sources/uwp-dep -DPACKAGE_VERSION=0.1.0.1
           if ($LASTEXITCODE) { throw 'UWP app configuration failed' }
       - name: Compile and package UWP app
         shell: pwsh
