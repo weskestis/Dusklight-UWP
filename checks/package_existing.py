@@ -33,7 +33,11 @@ def main():
     for name in ('main.cpp', 'CMakeLists.txt'):
         relative = f'crossover/platforms/uwp/{name}'
         original = subprocess.check_output(['git', '-C', str(ROOT), 'show', f'{ORIGIN}:{relative}']).decode()
-        if original.replace('\r\n', '\n') != (ROOT / relative).read_text():
+        current = (ROOT / relative).read_text()
+        if name == 'CMakeLists.txt':
+            # This exact addition changes package metadata, not the executable.
+            current = current.replace('set_property(TARGET ZeldaCrossoverUWP PROPERTY VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION "10.0.19041.0")\n', '')
+        if original.replace('\r\n', '\n') != current:
             raise RuntimeError(f'Executable input changed: {relative}; run a full build')
     old = json.loads(next((build / 'recovered').rglob('source-provenance.json')).read_text())
     provenance_path = build / 'sources/source-provenance.json'
@@ -53,8 +57,13 @@ def main():
         ET.register_namespace(prefix, uri)
     ET.register_namespace('mp', PHONE)
     manifest = ET.fromstring(manifest_bytes)
+    template = ET.parse(ROOT / 'crossover/platforms/uwp/Package.appxmanifest.in').getroot()
+    intended_family = template.find('p:Dependencies/p:TargetDeviceFamily', NS)
+    actual_family = manifest.find('p:Dependencies/p:TargetDeviceFamily', NS)
+    if intended_family is None or actual_family is None:
+        raise RuntimeError('Target device family is missing')
+    actual_family.attrib.update(intended_family.attrib)
     if manifest.find(f'{{{PHONE}}}PhoneIdentity') is None:
-        template = ET.parse(ROOT / 'crossover/platforms/uwp/Package.appxmanifest.in').getroot()
         phone = template.find(f'{{{PHONE}}}PhoneIdentity')
         if phone is None:
             raise RuntimeError('Source manifest has no PhoneIdentity')
