@@ -1,0 +1,53 @@
+name: Crossover SDL UWP runtime check
+on:
+  push:
+    branches: [codex/tp-ww-crossover-uwp]
+    paths: ['.github/workflows/check-crossover-sdl.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sdl:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: XboxEmulationHub/SDL3-uwp
+          ref: b978adcfea9daa6612ec60f1c77d93c0728ad821
+          path: sdl
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Configure Windows Store SDL
+        shell: pwsh
+        run: |
+          cmake -S sdl -B build/sdl -G 'Visual Studio 17 2022' -A x64 `
+            -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF
+          if ($LASTEXITCODE) { throw 'SDL configuration failed' }
+      - name: Build and inspect SDL
+        shell: pwsh
+        run: |
+          cmake --build build/sdl --config Release --target SDL3-shared --parallel 4
+          if ($LASTEXITCODE) { throw 'SDL compilation failed' }
+          $dll = Get-ChildItem build/sdl -Recurse -Filter SDL3.dll | Select-Object -First 1
+          if (-not $dll) { throw 'No SDL3.dll was built' }
+          $headers = & dumpbin /nologo /headers $dll.FullName | Out-String
+          $imports = & dumpbin /nologo /imports $dll.FullName | Out-String
+          $headers | Set-Content build/sdl-headers.txt
+          $imports | Set-Content build/sdl-imports.txt
+          if ($headers -notmatch '(?i)App Container') { throw 'SDL is missing AppContainer marking' }
+          if ($imports -match '(?im)^\s*(USER32|GDI32|SHELL32|MSVCP140|VCRUNTIME140|VCRUNTIME140_1|VCCORLIB140)[.]dll\s*$') {
+            throw 'SDL retains a desktop UI or C++ runtime dependency'
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Crossover-SDL-UWP-check
+          path: |
+            build/sdl-headers.txt
+            build/sdl-imports.txt
+            build/sdl/Release/SDL3.*
+            build/sdl/CMakeCache.txt
